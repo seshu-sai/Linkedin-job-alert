@@ -1,31 +1,31 @@
 import os
 import smtplib
-import json
-from io import StringIO
+from email.mime.text import MIMEText
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from email.mime.text import MIMEText
+import json
+from io import StringIO
 
 app = Flask(__name__)
 
-# Environment variables (set in Railway)
+# Load email credentials from Railway env variables
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-# Authorize Google Sheets access using in-memory JSON
+# Load Google Sheets credentials from env variable (minified JSON string)
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
 creds_dict = json.load(StringIO(GOOGLE_CREDENTIALS))
 CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
 client = gspread.authorize(CREDS)
-sheet = client.open_by_key(SPREADSHEET_ID).sheet1  # Safe lookup using ID
+sheet = client.open("LinkedIn Job Tracker").sheet1  # Update if your sheet name is different
 
-# LinkedIn job scraping config
+# LinkedIn job scraping setup
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 QUERY_PARAMS = {
@@ -49,22 +49,24 @@ def job_already_sent(job_url):
         existing_urls = sheet.col_values(1)
         return job_url in existing_urls
     except Exception as e:
-        print(f"❌ Google Sheet read error: {e}")
+        print(f"❌ Error checking Google Sheet: {e}")
         return False
 
 def mark_job_as_sent(job_url):
     try:
         sheet.append_row([job_url])
     except Exception as e:
-        print(f"❌ Google Sheet write error: {e}")
+        print(f"❌ Error writing to Google Sheet: {e}")
 
 def check_new_jobs():
     new_jobs = []
-    for start in range(0, 100, 25):
+
+    for start in range(0, 100, 25):  # pagination
         QUERY_PARAMS["start"] = start
         response = requests.get(BASE_URL, headers=HEADERS, params=QUERY_PARAMS)
         if response.status_code != 200 or not response.text.strip():
             break
+
         soup = BeautifulSoup(response.text, "html.parser")
         cards = soup.find_all("li")
         if not cards:
