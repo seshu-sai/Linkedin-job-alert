@@ -1,1 +1,1 @@
-worker: python main.py
+worker: python linkedin_job_scraper.py
