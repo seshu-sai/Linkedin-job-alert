@@ -6,28 +6,32 @@ from bs4 import BeautifulSoup
 from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
+from io import StringIO
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Email configuration (set these in Railway environment variables)
+# Load email credentials from Railway env variables
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
-# Google Sheets API setup
+# Load Google Sheets credentials from env variable (minified JSON string)
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
-client = gspread.authorize(CREDS)
-sheet = client.open("LinkedIn Job Tracker").sheet1  # Make sure this matches your sheet name
 
-# LinkedIn scraping configuration
+creds_dict = json.load(StringIO(GOOGLE_CREDENTIALS))
+CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+client = gspread.authorize(CREDS)
+sheet = client.open("LinkedIn Job Tracker").sheet1  # Update if your sheet name is different
+
+# LinkedIn job scraping setup
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 QUERY_PARAMS = {
     "keywords": "java developer OR java full stack developer",
     "location": "Ontario, Canada",
-    "f_TPR": "r86400",  # jobs posted in the last 24 hours
+    "f_TPR": "r86400",  # last 24 hours
     "sortBy": "DD"
 }
 
@@ -36,32 +40,30 @@ def send_email(subject, body):
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
-
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.send_message(msg)
 
 def job_already_sent(job_url):
     try:
-        existing_urls = sheet.col_values(1)  # check column A
+        existing_urls = sheet.col_values(1)
         return job_url in existing_urls
     except Exception as e:
-        print(f"Google Sheets check error: {e}")
+        print(f"❌ Error checking Google Sheet: {e}")
         return False
 
 def mark_job_as_sent(job_url):
     try:
         sheet.append_row([job_url])
     except Exception as e:
-        print(f"Google Sheets write error: {e}")
+        print(f"❌ Error writing to Google Sheet: {e}")
 
 def check_new_jobs():
     new_jobs = []
 
-    for start in range(0, 100, 25):  # paginate
+    for start in range(0, 100, 25):  # pagination
         QUERY_PARAMS["start"] = start
         response = requests.get(BASE_URL, headers=HEADERS, params=QUERY_PARAMS)
-
         if response.status_code != 200 or not response.text.strip():
             break
 
@@ -84,7 +86,10 @@ def check_new_jobs():
                 if "hour" in post_time or "Just now" in post_time:
                     if not job_already_sent(job_url):
                         mark_job_as_sent(job_url)
-                        job_details = f"{post_time} ➜ {title.get_text(strip=True)} at {company.get_text(strip=True)} — {location.get_text(strip=True)}\n{job_url}\n"
+                        job_details = (
+                            f"{post_time} ➜ {title.get_text(strip=True)} "
+                            f"at {company.get_text(strip=True)} — {location.get_text(strip=True)}\n{job_url}\n"
+                        )
                         new_jobs.append(job_details)
 
     if new_jobs:
