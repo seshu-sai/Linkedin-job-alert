@@ -89,7 +89,7 @@ def check_new_jobs():
             location_tag = card.select_one('[class*="_location"]')
 
             if link_tag and title_tag and company_tag:
-                job_url = link_tag['href'].strip()
+                job_url = link_tag['href'].strip().split('?')[0]
                 title = title_tag.get_text(strip=True)
                 company = company_tag.get_text(strip=True)
                 location = location_tag.get_text(strip=True) if location_tag else "Unknown"
