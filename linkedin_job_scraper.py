@@ -30,6 +30,7 @@ TARGET_TITLES = [
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
+EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 
 # Google Sheets configuration
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
@@ -103,6 +104,7 @@ def check_new_jobs():
                 if any(t in title_clean for t in TARGET_TITLES):
                     email_body = f"{title} at {company} — {location}\n{job_url}"
                     send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
+                    send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_2)
                     mark_job_as_sent(job_url)
                     print("✅ Sent DevOps job:", title)
 
