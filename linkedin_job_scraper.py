@@ -81,6 +81,8 @@ def extract_country(location):
         return "Other"
 
 def process_jobs(query_params, expected_category, expected_country):
+    seen_jobs = set()  # Track duplicates using title+company key
+
     for start in range(0, 100, 25):
         query_params["start"] = start
         response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
@@ -105,13 +107,16 @@ def process_jobs(query_params, expected_category, expected_country):
                 company = company_tag.get_text(strip=True)
                 location = location_tag.get_text(strip=True) if location_tag else "Unknown"
                 country = extract_country(location)
+                dedup_key = f"{title_lower}::{company.lower()}"
 
-                if job_already_sent(job_url):
+                if dedup_key in seen_jobs or job_already_sent(job_url):
                     continue
+                seen_jobs.add(dedup_key)
+
+                email_body = f"{title} at {company} — {location}\n{job_url}"
 
                 # DevOps (Canada only)
                 if expected_category == "DevOps" and any(t in title_lower for t in TARGET_TITLES_DEVOPS) and country == expected_country:
-                    email_body = f"{title} at {company} — {location}\n{job_url}"
                     send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
                     send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
                     mark_job_as_sent(job_url, title, company, location, "DevOps", country)
@@ -119,7 +124,6 @@ def process_jobs(query_params, expected_category, expected_country):
 
                 # EMC (India only)
                 elif expected_category == "EMC" and any(t in title_lower for t in TARGET_TITLES_EMC) and country == expected_country:
-                    email_body = f"{title} at {company} — {location}\n{job_url}"
                     send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
                     mark_job_as_sent(job_url, title, company, location, "EMC", country)
                     print("✅ Sent EMC job (India):", title)
