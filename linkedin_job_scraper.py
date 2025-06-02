@@ -42,27 +42,11 @@ SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 creds_dict = json.load(StringIO(GOOGLE_CREDENTIALS))
 CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
 client = gspread.authorize(CREDS)
-sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")  # ← use Sheet2
+sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")  # Using Sheet2
 
 # LinkedIn search config
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-QUERY_PARAMS = {
-    "keywords": (
-        "devops engineer OR sre OR site reliability engineer OR cloud engineer OR "
-        "aws devops engineer OR azure devops engineer OR platform engineer OR "
-        "infrastructure engineer OR cloud operations engineer OR reliability engineer OR "
-        "automation engineer OR cloud consultant OR build engineer OR cicd engineer OR "
-        "systems reliability engineer OR observability engineer OR kubernetes engineer OR "
-        "devsecops engineer OR infrastructure developer OR platform reliability engineer OR "
-        "automation specialist OR emc OR emi/emc OR signal integrity OR conducted emission OR "
-        "radiated emission OR pcb level emi/emc OR antenna simulations OR electromagnetics OR "
-        "electromagnetic simulations OR interference"
-    ),
-    "location": "Worldwide",
-    "f_TPR": "r3600",  # Posted in last 1 hour
-    "sortBy": "DD"
-}
 
 def send_email(subject, body, to_email):
     msg = MIMEText(body)
@@ -96,10 +80,10 @@ def extract_country(location):
     else:
         return "Other"
 
-def check_new_jobs():
+def process_jobs(query_params, expected_category, expected_country):
     for start in range(0, 100, 25):
-        QUERY_PARAMS["start"] = start
-        response = requests.get(BASE_URL, headers=HEADERS, params=QUERY_PARAMS)
+        query_params["start"] = start
+        response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
         if response.status_code != 200 or not response.text.strip():
             break
 
@@ -125,25 +109,44 @@ def check_new_jobs():
                 if job_already_sent(job_url):
                     continue
 
-                email_body = f"{title} at {company} — {location}\n{job_url}"
-
-                # DevOps Job
-                if any(t in title_lower for t in TARGET_TITLES_DEVOPS):
+                # DevOps (Canada only)
+                if expected_category == "DevOps" and any(t in title_lower for t in TARGET_TITLES_DEVOPS) and country == expected_country:
+                    email_body = f"{title} at {company} — {location}\n{job_url}"
                     send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
                     send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
                     mark_job_as_sent(job_url, title, company, location, "DevOps", country)
-                    print("✅ Sent DevOps job:", title)
+                    print("✅ Sent DevOps job (Canada):", title)
 
-                # EMC Job
-                elif any(t in title_lower for t in TARGET_TITLES_EMC):
+                # EMC (India only)
+                elif expected_category == "EMC" and any(t in title_lower for t in TARGET_TITLES_EMC) and country == expected_country:
+                    email_body = f"{title} at {company} — {location}\n{job_url}"
                     send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
                     mark_job_as_sent(job_url, title, company, location, "EMC", country)
-                    print("✅ Sent EMC job:", title)
+                    print("✅ Sent EMC job (India):", title)
+
+def check_new_jobs():
+    # --- Canada DevOps Jobs ---
+    devops_query = {
+        "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
+        "location": "Canada",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
+    process_jobs(devops_query, "DevOps", "Canada")
+
+    # --- India EMC Jobs ---
+    emc_query = {
+        "keywords": " OR ".join(TARGET_TITLES_EMC),
+        "location": "India",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
+    process_jobs(emc_query, "EMC", "India")
 
 @app.route("/")
 def ping():
     check_new_jobs()
-    return "✅ Checked for DevOps and EMC jobs."
+    return "✅ Checked for DevOps (Canada) and EMC (India) jobs."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
