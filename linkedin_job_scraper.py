@@ -29,12 +29,21 @@ TARGET_TITLES_EMC = [
     "electromagnetic simulations", "interference"
 ]
 
+# Cybersecurity job titles
+TARGET_TITLES_CYBER = [
+    "cybersecurity analyst", "soc analyst", "incident response analyst", "threat detection analyst",
+    "siem analyst", "splunk analyst", "qradar analyst", "sentinel analyst", "sr. cybersecurity analyst",
+    "security monitoring analyst", "information security analyst", "edr analyst", "cloud security analyst",
+    "azure security analyst", "aws security analyst"
+]
+
 # Email configuration
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
+EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
 
 # Google Sheets setup (Sheet2 used here)
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
@@ -81,7 +90,7 @@ def extract_country(location):
         return "Other"
 
 def process_jobs(query_params, expected_category, expected_country):
-    seen_jobs = set()  # Track duplicates using title+company key
+    seen_jobs = set()
 
     for start in range(0, 100, 25):
         query_params["start"] = start
@@ -128,6 +137,12 @@ def process_jobs(query_params, expected_category, expected_country):
                     mark_job_as_sent(job_url, title, company, location, "EMC", country)
                     print("✅ Sent EMC job (India):", title)
 
+                # Cybersecurity (India only)
+                elif expected_category == "Cybersecurity" and any(t in title_lower for t in TARGET_TITLES_CYBER) and country == expected_country:
+                    send_email("🛡️ New Cybersecurity Job!", email_body, EMAIL_RECEIVER_CYBER)
+                    mark_job_as_sent(job_url, title, company, location, "Cybersecurity", country)
+                    print("✅ Sent Cybersecurity job (India):", title)
+
 def check_new_jobs():
     # --- Canada DevOps Jobs ---
     devops_query = {
@@ -147,10 +162,19 @@ def check_new_jobs():
     }
     process_jobs(emc_query, "EMC", "India")
 
+    # --- India Cybersecurity Jobs ---
+    cyber_query = {
+        "keywords": " OR ".join(TARGET_TITLES_CYBER),
+        "location": "India",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
+    process_jobs(cyber_query, "Cybersecurity", "Canada")
+
 @app.route("/")
 def ping():
     check_new_jobs()
-    return "✅ Checked for DevOps (Canada) and EMC (India) jobs."
+    return "✅ Checked for DevOps (Canada), EMC (India), and Cybersecurity (India) jobs."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
