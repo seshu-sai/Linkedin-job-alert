@@ -44,6 +44,7 @@ EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
+EMAIL_RECEIVER_BHANU="thigullaprasad6@gmail.com"
 
 # Google Sheets setup (Sheet2 used here)
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
@@ -165,12 +166,12 @@ def check_new_jobs():
     # --- India Cybersecurity Jobs ---
     cyber_query = {
         "keywords": " OR ".join(TARGET_TITLES_CYBER),
-        "location": "India",
+        "location": "Canada",
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
     process_jobs(cyber_query, "Cybersecurity", "Canada")
-
+    process_jobs(devops_query, "DevOps", "Canada")
 @app.route("/")
 def ping():
     check_new_jobs()
