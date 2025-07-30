@@ -34,7 +34,12 @@ TARGET_TITLES_CYBER = [
     "cybersecurity analyst", "soc analyst", "incident response analyst", "threat detection analyst",
     "siem analyst", "splunk analyst", "qradar analyst", "sentinel analyst", "sr. cybersecurity analyst",
     "security monitoring analyst", "information security analyst", "edr analyst", "cloud security analyst",
-    "azure security analyst", "aws security analyst"
+    "azure security analyst", "aws security analyst", "IAM Analyst / Engineer / Administrator",
+    "Identity & Access Specialist", "Identity Governance Analyst", "Privileged Access Management Engineer",
+    "SailPoint Developer / Consultant",
+    "Okta Administrator / IAM Engineer",
+    "Access Control Analyst",
+    "Azure IAM Engineer", Cloud IAM Analyst"
 ]
 
 # Email configuration
@@ -44,6 +49,7 @@ EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
+EMAIL_RECEIVER_CYBER = "achuyuth61@gmail.com"
 EMAIL_RECEIVER_BHANU="thigullaprasad6@gmail.com"
 
 # Google Sheets setup (Sheet2 used here)
