@@ -49,7 +49,7 @@ EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
-EMAIL_RECEIVER_CYBER = "achuyuth61@gmail.com"
+EMAIL_RECEIVER_CYBER1 = "achuyuth61@gmail.com"
 EMAIL_RECEIVER_BHANU="thigullaprasad6@gmail.com"
 
 # Google Sheets setup (Sheet2 used here)
