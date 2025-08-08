@@ -49,6 +49,7 @@ EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_BHANU = os.getenv("EMAIL_RECEIVER_BHANU", "thigullaprasad6@gmail.com")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
+EMAIL_RECEIVER_PRANEETH = "pranithduvva@gmail.com"
 
 # -------------------------
 # Google Sheets setup (Sheet2)
@@ -160,6 +161,7 @@ def process_jobs(query_params, expected_category, expected_country):
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_BHANU)
+                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_PRANEETH)
                 mark_job_as_sent(job_url, title, company, location, "DevOps", country)
                 print("✅ Sent DevOps job (Canada):", title)
 
@@ -197,11 +199,11 @@ def check_new_jobs():
     # --- India Cybersecurity Jobs ---
     cyber_query = {
         "keywords": " OR ".join(TARGET_TITLES_CYBER),
-        "location": "India",
+        "location": "Canada",
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
-    process_jobs(cyber_query, "Cybersecurity", "India")
+    process_jobs(cyber_query, "Cybersecurity", "Canada")
 
 # -------------------------
 # Flask endpoint
