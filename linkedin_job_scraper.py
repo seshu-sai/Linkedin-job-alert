@@ -36,7 +36,7 @@ TARGET_TITLES_CYBER = [
     "azure security analyst", "aws security analyst", "iam analyst", "iam engineer",
     "identity & access specialist", "identity governance analyst",
     "privileged access management engineer", "sailpoint developer", "okta administrator",
-    "iam engineer", "access control analyst", "azure iam engineer", "cloud iam analyst"
+    "access control analyst", "azure iam engineer", "cloud iam analyst"
 ]
 
 # -------------------------
@@ -47,9 +47,9 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_BHANU = os.getenv("EMAIL_RECEIVER_BHANU", "thigullaprasad6@gmail.com")
+EMAIL_RECEIVER_PRANEETH = os.getenv("EMAIL_RECEIVER_PRANEETH", "pranithduvva@gmail.com")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
-EMAIL_RECEIVER_PRANEETH = "pranithduvva@gmail.com"
 
 # -------------------------
 # Google Sheets setup (Sheet2)
@@ -66,6 +66,7 @@ if GOOGLE_CREDENTIALS:
         sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")  # Using Sheet2
     except Exception as e:
         print(f"⚠️ Sheets disabled (auth/init failed): {e}")
+        sheet = None
 
 # -------------------------
 # LinkedIn search config
@@ -77,35 +78,49 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # Helpers
 # -------------------------
 def send_email(subject, body, to_email):
-    if not (EMAIL_SENDER and EMAIL_PASSWORD and to_email):
+    if not to_email:
+        return
+    if not (EMAIL_SENDER and EMAIL_PASSWORD):
         print(f"📭 [DRY-RUN EMAIL] To: {to_email} | {subject}\n{body}\n")
         return
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = to_email
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        server.send_message(msg)
-
-def job_already_sent(job_url):
-    if not sheet:
-        return False
     try:
-        existing_urls = sheet.col_values(1)
-        return job_url in existing_urls
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.send_message(msg)
     except Exception as e:
-        print(f"❌ Error reading sheet: {e}")
-        return False
+        print(f"❌ Email send failed to {to_email}: {e}")
 
-def mark_job_as_sent(job_url, title, company, location, category, country):
+def load_sent_urls():
+    """ONE read per run to avoid quota errors."""
     if not sheet:
-        print(f"📝 [DRY-RUN SHEET] {category} | {title} | {company} | {location} | {country} | {job_url}")
+        return set()
+    try:
+        urls = sheet.col_values(1)  # Column A
+        return set(urls or [])
+    except Exception as e:
+        print(f"❌ Error reading sheet once: {e}")
+        return set()
+
+def append_rows_batch(rows):
+    """ONE write per run."""
+    if not rows:
+        return
+    if not sheet:
+        for r in rows:
+            print(f"📝 [DRY-RUN SHEET] {r}")
         return
     try:
-        sheet.append_row([job_url, title, company, location, category, country])
+        if hasattr(sheet, "append_rows"):
+            sheet.append_rows(rows, value_input_option="RAW")
+        else:
+            for r in rows:
+                sheet.append_row(r, value_input_option="RAW")
     except Exception as e:
-        print(f"❌ Error writing to sheet: {e}")
+        print(f"❌ Error batch appending to sheet: {e}")
 
 def extract_country(location):
     location_lower = (location or "").lower()
@@ -118,13 +133,17 @@ def extract_country(location):
 # -------------------------
 # Core logic
 # -------------------------
-def process_jobs(query_params, expected_category, expected_country):
+def process_jobs(query_params, expected_category, expected_country, title_list, sent_urls, rows_out):
     seen_jobs = set()
 
     for start in range(0, 100, 25):
-        params = dict(query_params)
-        params["start"] = start
-        response = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=20)
+        params = dict(query_params, start=start)
+        try:
+            response = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=20)
+        except Exception as e:
+            print(f"❌ Request error: {e}")
+            break
+
         if response.status_code != 200 or not response.text.strip():
             break
 
@@ -142,42 +161,49 @@ def process_jobs(query_params, expected_category, expected_country):
             if not (link_tag and title_tag and company_tag):
                 continue
 
-            job_url = link_tag.get("href", "").strip().split("?")[0]
+            job_url = (link_tag.get("href") or "").strip().split("?")[0]
+            if not job_url:
+                continue
+
             title = title_tag.get_text(strip=True)
             title_lower = title.lower()
             company = company_tag.get_text(strip=True)
             location = location_tag.get_text(strip=True) if location_tag else "Unknown"
             country = extract_country(location)
 
+            # per-run and historical dedup
             dedup_key = f"{title_lower}::{company.lower()}"
-            if dedup_key in seen_jobs or job_already_sent(job_url):
+            if dedup_key in seen_jobs or job_url in sent_urls:
                 continue
             seen_jobs.add(dedup_key)
 
-            email_body = f"{title} at {company} — {location}\n{job_url}"
+            # filters
+            if country != expected_country:
+                continue
+            if not any(t in title_lower for t in title_list):
+                continue
 
-            # DevOps (Canada only)
-            if expected_category == "DevOps" and any(t in title_lower for t in TARGET_TITLES_DEVOPS) and country == expected_country:
+            # email fanout
+            email_body = f"{title} at {company} — {location}\n{job_url}"
+            if expected_category == "DevOps":
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_BHANU)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_PRANEETH)
-                mark_job_as_sent(job_url, title, company, location, "DevOps", country)
-                print("✅ Sent DevOps job (Canada):", title)
-
-            # EMC (India only)
-            elif expected_category == "EMC" and any(t in title_lower for t in TARGET_TITLES_EMC) and country == expected_country:
+            elif expected_category == "EMC":
                 send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
-                mark_job_as_sent(job_url, title, company, location, "EMC", country)
-                print("✅ Sent EMC job (India):", title)
-
-            # Cybersecurity (India only)
-            elif expected_category == "Cybersecurity" and any(t in title_lower for t in TARGET_TITLES_CYBER) and country == expected_country:
+            elif expected_category == "Cybersecurity":
                 send_email("🛡️ New Cybersecurity Job!", email_body, EMAIL_RECEIVER_CYBER)
-                mark_job_as_sent(job_url, title, company, location, "Cybersecurity", country)
-                print("✅ Sent Cybersecurity job (India):", title)
+
+            # queue for single batch write and mark in-memory
+            rows_out.append([job_url, title, company, location, expected_category, country])
+            sent_urls.add(job_url)
+            print(f"✅ Sent {expected_category} job ({country}): {title} | {company}")
 
 def check_new_jobs():
+    sent_urls = load_sent_urls()  # ONE read
+    rows_to_append = []
+
     # --- Canada DevOps Jobs ---
     devops_query = {
         "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
@@ -185,7 +211,7 @@ def check_new_jobs():
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
-    process_jobs(devops_query, "DevOps", "Canada")
+    process_jobs(devops_query, "DevOps", "Canada", TARGET_TITLES_DEVOPS, sent_urls, rows_to_append)
 
     # --- India EMC Jobs ---
     emc_query = {
@@ -194,16 +220,18 @@ def check_new_jobs():
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
-    process_jobs(emc_query, "EMC", "India")
+    process_jobs(emc_query, "EMC", "India", TARGET_TITLES_EMC, sent_urls, rows_to_append)
 
-    # --- India Cybersecurity Jobs ---
+    # --- Canada Cybersecurity Jobs ---
     cyber_query = {
         "keywords": " OR ".join(TARGET_TITLES_CYBER),
         "location": "Canada",
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
-    process_jobs(cyber_query, "Cybersecurity", "Canada")
+    process_jobs(cyber_query, "Cybersecurity", "Canada", TARGET_TITLES_CYBER, sent_urls, rows_to_append)
+
+    append_rows_batch(rows_to_append)  # ONE write
 
 # -------------------------
 # Flask endpoint
@@ -211,7 +239,7 @@ def check_new_jobs():
 @app.route("/")
 def ping():
     check_new_jobs()
-    return "✅ Checked for DevOps (Canada), EMC (India), and Cybersecurity (India) jobs."
+    return "✅ Checked for DevOps (Canada), EMC (India), and Cybersecurity (Canada) jobs."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
