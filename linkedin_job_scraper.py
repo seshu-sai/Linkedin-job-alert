@@ -50,6 +50,8 @@ EMAIL_RECEIVER_BHANU = os.getenv("EMAIL_RECEIVER_BHANU", "thigullaprasad6@gmail.
 EMAIL_RECEIVER_PRANEETH = os.getenv("EMAIL_RECEIVER_PRANEETH", "pranithduvva@gmail.com")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
+EMAIL_RECEIVER_TARUN = "mannemtarun51@gmail.com"
+EMAIL_RECEIVER_VARUN = "contact.hemanth550@gmail.com"
 
 # -------------------------
 # Google Sheets setup (Sheet2)
@@ -190,6 +192,8 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_BHANU)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_PRANEETH)
+                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_TARUN)
+                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_VARUN)
             elif expected_category == "EMC":
                 send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
             elif expected_category == "Cybersecurity":
