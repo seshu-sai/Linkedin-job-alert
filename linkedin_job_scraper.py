@@ -44,14 +44,31 @@ TARGET_TITLES_CYBER = [
 # -------------------------
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+# (Kept for compatibility if you ever want to reuse)
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_BHANU = os.getenv("EMAIL_RECEIVER_BHANU", "thigullaprasad6@gmail.com")
 EMAIL_RECEIVER_PRANEETH = os.getenv("EMAIL_RECEIVER_PRANEETH", "pranithduvva@gmail.com")
+
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
 EMAIL_RECEIVER_TARUN = "mannemtarun51@gmail.com"
 EMAIL_RECEIVER_VARUN = "contact.hemanth550@gmail.com"
+
+# Centralized fanout per category
+CATEGORY_RECIPIENTS = {
+    # Per request: DevOps → ONLY Tarun & Varun
+    "DevOps": [EMAIL_RECEIVER_TARUN, EMAIL_RECEIVER_VARUN],
+    "EMC": [EMAIL_RECEIVER_EMC],
+    "Cybersecurity": [EMAIL_RECEIVER_CYBER],
+}
+
+SUBJECT_MAP = {
+    "DevOps": "🚨 New DevOps/SRE Job!",
+    "EMC": "📡 New EMC/Signal Integrity Job!",
+    "Cybersecurity": "🛡️ New Cybersecurity Job!",
+}
 
 # -------------------------
 # Google Sheets setup (Sheet2)
@@ -185,19 +202,12 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             if not any(t in title_lower for t in title_list):
                 continue
 
-            # email fanout
+            # email fanout (category-based)
             email_body = f"{title} at {company} — {location}\n{job_url}"
-            if expected_category == "DevOps":
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_BHANU)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_PRANEETH)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_TARUN)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_VARUN)
-            elif expected_category == "EMC":
-                send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
-            elif expected_category == "Cybersecurity":
-                send_email("🛡️ New Cybersecurity Job!", email_body, EMAIL_RECEIVER_CYBER)
+            subject = SUBJECT_MAP.get(expected_category, "🔔 New Job!")
+
+            for recipient in CATEGORY_RECIPIENTS.get(expected_category, []):
+                send_email(subject, email_body, recipient)
 
             # queue for single batch write and mark in-memory
             rows_out.append([job_url, title, company, location, expected_category, country])
@@ -212,7 +222,7 @@ def check_new_jobs():
     devops_query = {
         "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
         "location": "Canada",
-        "f_TPR": "r3600",
+        "f_TPR": "r3600",  # last hour
         "sortBy": "DD"
     }
     process_jobs(devops_query, "DevOps", "Canada", TARGET_TITLES_DEVOPS, sent_urls, rows_to_append)
