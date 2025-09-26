@@ -53,13 +53,14 @@ EMAIL_RECEIVER_PRANEETH = os.getenv("EMAIL_RECEIVER_PRANEETH", "pranithduvva@gma
 
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
+EMAIL_RECEIVER_CYBER_2 = "achyuth2806@gmail.com"
 EMAIL_RECEIVER_TARUN = "mannemtarun51@gmail.com"
 EMAIL_RECEIVER_VARUN = "contact.hemanth550@gmail.com"
 
 # Centralized fanout per category
 CATEGORY_RECIPIENTS = {
     # Per request: DevOps → ONLY Tarun & Varun
-    "DevOps": [EMAIL_RECEIVER_TARUN, EMAIL_RECEIVER_VARUN],
+    "DevOps": [EMAIL_RECEIVER_TARUN, EMAIL_RECEIVER_VARUN, EMAIL_RECEIVER_CYBER_2], 
     "EMC": [EMAIL_RECEIVER_EMC],
     "Cybersecurity": [EMAIL_RECEIVER_CYBER],
 }
