@@ -61,7 +61,7 @@ EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
 EMAIL_RECEIVER_TARUN = "mannemtarun51@gmail.com"
 EMAIL_RECEIVER_VARUN = "contact.hemanth550@gmail.com"
-EMAIL_RECEIVER_SATVIKA = "chepyalasatvika@gmail.com"
+EMAIL_RECEIVER_SATVIKA = "chepyalasatvika7@gmail.com"
 
 # -------------------------
 # Category Recipients
