@@ -92,7 +92,7 @@ if GOOGLE_CREDENTIALS:
         creds_dict = json.loads(GOOGLE_CREDENTIALS)
         CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
         client = gspread.authorize(CREDS)
-        sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")  # Using Sheet2
+        sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
     except Exception as e:
         print(f"⚠️ Sheets disabled (auth/init failed): {e}")
         sheet = None
@@ -164,6 +164,7 @@ def extract_country(location):
 # -------------------------
 def process_jobs(query_params, expected_category, expected_country, title_list, sent_urls, rows_out):
     seen_jobs = set()
+    seen_companies = set()  # ✅ new: to avoid multiple alerts for the same company
 
     for start in range(0, 100, 25):
         params = dict(query_params, start=start)
@@ -200,10 +201,16 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             location = location_tag.get_text(strip=True) if location_tag else "Unknown"
             country = extract_country(location)
 
-            # per-run and historical dedup
+            # per-run dedup
             dedup_key = f"{title_lower}::{company.lower()}"
             if dedup_key in seen_jobs or job_url in sent_urls:
                 continue
+
+            # ✅ new company-level dedup
+            if company.lower() in seen_companies:
+                continue
+            seen_companies.add(company.lower())
+
             seen_jobs.add(dedup_key)
 
             # filters
@@ -212,14 +219,13 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             if not any(t in title_lower for t in title_list):
                 continue
 
-            # email fanout (category-based)
+            # email fanout
             email_body = f"{title} at {company} — {location}\n{job_url}"
             subject = SUBJECT_MAP.get(expected_category, "🔔 New Job!")
 
             for recipient in CATEGORY_RECIPIENTS.get(expected_category, []):
                 send_email(subject, email_body, recipient)
 
-            # queue for batch write
             rows_out.append([job_url, title, company, location, expected_category, country])
             sent_urls.add(job_url)
             print(f"✅ Sent {expected_category} job ({country}): {title} | {company}")
