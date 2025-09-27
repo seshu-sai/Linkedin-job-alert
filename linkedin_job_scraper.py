@@ -39,13 +39,19 @@ TARGET_TITLES_CYBER = [
     "access control analyst", "azure iam engineer", "cloud iam analyst"
 ]
 
+TARGET_TITLES_SALESFORCE = [
+    "salesforce admin", "salesforce administrator",
+    "salesforce developer", "salesforce consultant",
+    "salesforce engineer", "salesforce architect",
+    "salesforce specialist", "salesforce analyst"
+]
+
 # -------------------------
 # Email configuration
 # -------------------------
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
-# (Kept for compatibility if you ever want to reuse)
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_BHANU = os.getenv("EMAIL_RECEIVER_BHANU", "thigullaprasad6@gmail.com")
@@ -53,22 +59,25 @@ EMAIL_RECEIVER_PRANEETH = os.getenv("EMAIL_RECEIVER_PRANEETH", "pranithduvva@gma
 
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
-EMAIL_RECEIVER_CYBER_2 = "achyuth2806@gmail.com"
 EMAIL_RECEIVER_TARUN = "mannemtarun51@gmail.com"
 EMAIL_RECEIVER_VARUN = "contact.hemanth550@gmail.com"
+EMAIL_RECEIVER_SATVIKA = "chepyalasatvika@gmail.com"
 
-# Centralized fanout per category
+# -------------------------
+# Category Recipients
+# -------------------------
 CATEGORY_RECIPIENTS = {
-    # Per request: DevOps → ONLY Tarun & Varun
-    "DevOps": [EMAIL_RECEIVER_TARUN, EMAIL_RECEIVER_VARUN, EMAIL_RECEIVER_CYBER_2], 
+    "DevOps": [EMAIL_RECEIVER_TARUN, EMAIL_RECEIVER_VARUN, EMAIL_RECEIVER_CYBER],
     "EMC": [EMAIL_RECEIVER_EMC],
     "Cybersecurity": [EMAIL_RECEIVER_CYBER],
+    "Salesforce": [EMAIL_RECEIVER_SATVIKA],
 }
 
 SUBJECT_MAP = {
     "DevOps": "🚨 New DevOps/SRE Job!",
     "EMC": "📡 New EMC/Signal Integrity Job!",
     "Cybersecurity": "🛡️ New Cybersecurity Job!",
+    "Salesforce": "☁️ New Salesforce Job!",
 }
 
 # -------------------------
@@ -115,7 +124,6 @@ def send_email(subject, body, to_email):
         print(f"❌ Email send failed to {to_email}: {e}")
 
 def load_sent_urls():
-    """ONE read per run to avoid quota errors."""
     if not sheet:
         return set()
     try:
@@ -126,7 +134,6 @@ def load_sent_urls():
         return set()
 
 def append_rows_batch(rows):
-    """ONE write per run."""
     if not rows:
         return
     if not sheet:
@@ -148,6 +155,8 @@ def extract_country(location):
         return "Canada"
     if "india" in location_lower:
         return "India"
+    if "united states" in location_lower or "usa" in location_lower or "u.s." in location_lower:
+        return "United States"
     return "Other"
 
 # -------------------------
@@ -210,25 +219,25 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             for recipient in CATEGORY_RECIPIENTS.get(expected_category, []):
                 send_email(subject, email_body, recipient)
 
-            # queue for single batch write and mark in-memory
+            # queue for batch write
             rows_out.append([job_url, title, company, location, expected_category, country])
             sent_urls.add(job_url)
             print(f"✅ Sent {expected_category} job ({country}): {title} | {company}")
 
 def check_new_jobs():
-    sent_urls = load_sent_urls()  # ONE read
+    sent_urls = load_sent_urls()
     rows_to_append = []
 
-    # --- Canada DevOps Jobs ---
+    # Canada DevOps
     devops_query = {
         "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
         "location": "Canada",
-        "f_TPR": "r3600",  # last hour
+        "f_TPR": "r3600",
         "sortBy": "DD"
     }
     process_jobs(devops_query, "DevOps", "Canada", TARGET_TITLES_DEVOPS, sent_urls, rows_to_append)
 
-    # --- India EMC Jobs ---
+    # India EMC
     emc_query = {
         "keywords": " OR ".join(TARGET_TITLES_EMC),
         "location": "India",
@@ -237,7 +246,7 @@ def check_new_jobs():
     }
     process_jobs(emc_query, "EMC", "India", TARGET_TITLES_EMC, sent_urls, rows_to_append)
 
-    # --- Canada Cybersecurity Jobs ---
+    # Canada Cybersecurity
     cyber_query = {
         "keywords": " OR ".join(TARGET_TITLES_CYBER),
         "location": "Canada",
@@ -246,7 +255,16 @@ def check_new_jobs():
     }
     process_jobs(cyber_query, "Cybersecurity", "Canada", TARGET_TITLES_CYBER, sent_urls, rows_to_append)
 
-    append_rows_batch(rows_to_append)  # ONE write
+    # United States Salesforce
+    salesforce_query = {
+        "keywords": " OR ".join(TARGET_TITLES_SALESFORCE),
+        "location": "United States",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
+    process_jobs(salesforce_query, "Salesforce", "United States", TARGET_TITLES_SALESFORCE, sent_urls, rows_to_append)
+
+    append_rows_batch(rows_to_append)
 
 # -------------------------
 # Flask endpoint
@@ -254,7 +272,7 @@ def check_new_jobs():
 @app.route("/")
 def ping():
     check_new_jobs()
-    return "✅ Checked for DevOps (Canada), EMC (India), and Cybersecurity (Canada) jobs."
+    return "✅ Checked for DevOps (Canada), EMC (India), Cybersecurity (Canada), and Salesforce (US) jobs."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
