@@ -3,3 +3,4 @@ requests
 beautifulsoup4
 gspread
 oauth2client
+sendgrid==6.11.0
