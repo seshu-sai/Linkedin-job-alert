@@ -1,6 +1,4 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
@@ -47,13 +45,13 @@ TARGET_TITLES_SALESFORCE = [
 ]
 
 # -------------------------
-# Email configuration
+# SendGrid configuration
 # -------------------------
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "your_verified_sender@example.com")
 
-EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
-EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
+EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS", "example1@gmail.com")
+EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2", "example2@gmail.com")
 EMAIL_RECEIVER_BHANU = os.getenv("EMAIL_RECEIVER_BHANU", "thigullaprasad6@gmail.com")
 EMAIL_RECEIVER_PRANEETH = os.getenv("EMAIL_RECEIVER_PRANEETH", "pranithduvva@gmail.com")
 
@@ -107,21 +105,27 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # Helpers
 # -------------------------
 def send_email(subject, body, to_email):
-    if not to_email:
-        return
-    if not (EMAIL_SENDER and EMAIL_PASSWORD):
+    """Send email using SendGrid API"""
+    if not SENDGRID_API_KEY:
         print(f"📭 [DRY-RUN EMAIL] To: {to_email} | {subject}\n{body}\n")
         return
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = to_email
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.send_message(msg)
-    except Exception as e:
-        print(f"❌ Email send failed to {to_email}: {e}")
+
+    url = "https://api.sendgrid.com/v3/mail/send"
+    headers = {
+        "Authorization": f"Bearer {SENDGRID_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": EMAIL_SENDER},
+        "subject": subject,
+        "content": [{"type": "text/plain", "value": body}]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code >= 400:
+        print(f"❌ Email send failed: {response.status_code} {response.text}")
+    else:
+        print(f"✅ Email sent to {to_email}")
 
 def load_sent_urls():
     if not sheet:
@@ -164,7 +168,7 @@ def extract_country(location):
 # -------------------------
 def process_jobs(query_params, expected_category, expected_country, title_list, sent_urls, rows_out):
     seen_jobs = set()
-    seen_companies = set()  # ✅ new: to avoid multiple alerts for the same company
+    seen_companies = set()
 
     for start in range(0, 100, 25):
         params = dict(query_params, start=start)
@@ -201,25 +205,21 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             location = location_tag.get_text(strip=True) if location_tag else "Unknown"
             country = extract_country(location)
 
-            # per-run dedup
             dedup_key = f"{title_lower}::{company.lower()}"
             if dedup_key in seen_jobs or job_url in sent_urls:
                 continue
 
-            # ✅ new company-level dedup
             if company.lower() in seen_companies:
                 continue
             seen_companies.add(company.lower())
 
             seen_jobs.add(dedup_key)
 
-            # filters
             if country != expected_country:
                 continue
             if not any(t in title_lower for t in title_list):
                 continue
 
-            # email fanout
             email_body = f"{title} at {company} — {location}\n{job_url}"
             subject = SUBJECT_MAP.get(expected_category, "🔔 New Job!")
 
@@ -234,7 +234,6 @@ def check_new_jobs():
     sent_urls = load_sent_urls()
     rows_to_append = []
 
-    # Canada DevOps
     devops_query = {
         "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
         "location": "Canada",
@@ -243,7 +242,6 @@ def check_new_jobs():
     }
     process_jobs(devops_query, "DevOps", "Canada", TARGET_TITLES_DEVOPS, sent_urls, rows_to_append)
 
-    # India EMC
     emc_query = {
         "keywords": " OR ".join(TARGET_TITLES_EMC),
         "location": "India",
@@ -252,7 +250,6 @@ def check_new_jobs():
     }
     process_jobs(emc_query, "EMC", "India", TARGET_TITLES_EMC, sent_urls, rows_to_append)
 
-    # Canada Cybersecurity
     cyber_query = {
         "keywords": " OR ".join(TARGET_TITLES_CYBER),
         "location": "Canada",
@@ -261,7 +258,6 @@ def check_new_jobs():
     }
     process_jobs(cyber_query, "Cybersecurity", "Canada", TARGET_TITLES_CYBER, sent_urls, rows_to_append)
 
-    # United States Salesforce
     salesforce_query = {
         "keywords": " OR ".join(TARGET_TITLES_SALESFORCE),
         "location": "United States",
@@ -279,6 +275,11 @@ def check_new_jobs():
 def ping():
     check_new_jobs()
     return "✅ Checked for DevOps (Canada), EMC (India), Cybersecurity (Canada), and Salesforce (US) jobs."
+
+@app.route("/test-email")
+def test_email():
+    send_email("Test Email from JobTracker", "This is a test email body", EMAIL_RECEIVER_BHANU)
+    return "✅ Test email triggered"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
