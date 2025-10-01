@@ -7,7 +7,6 @@ from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-from io import StringIO
 
 app = Flask(__name__)
 
@@ -77,9 +76,13 @@ def send_email(subject, body, to_email):
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = to_email
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        server.send_message(msg)
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.send_message(msg)
+        print(f"📧 Sent email to {to_email}")
+    except Exception as e:
+        print(f"❌ Email send failed to {to_email}: {e}")
 
 def load_sent_urls():
     """Read sheet only once per run"""
@@ -154,8 +157,11 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             if expected_category == "DevOps":
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
+                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_CYBER)  # also to Achyuth
+
             elif expected_category == "EMC":
                 send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
+
             elif expected_category == "Cybersecurity":
                 send_email("🛡️ New Cybersecurity Job!", email_body, EMAIL_RECEIVER_CYBER)
 
