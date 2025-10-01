@@ -1,12 +1,12 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 app = Flask(__name__)
 
@@ -40,11 +40,10 @@ TARGET_TITLES_CYBER = [
 ]
 
 # -------------------------
-# Email Config
+# SendGrid Config
 # -------------------------
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+FROM_EMAIL = os.getenv("FROM_EMAIL")  # must be your verified sender in SendGrid
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
@@ -71,15 +70,18 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # Helpers
 # -------------------------
 def send_email(subject, body, to_email):
-    """Send email via Gmail SMTP"""
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = to_email
+    """Send email via SendGrid"""
+    if not to_email:
+        return
+    message = Mail(
+        from_email=FROM_EMAIL,
+        to_emails=to_email,
+        subject=subject,
+        plain_text_content=body
+    )
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.send_message(msg)
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
         print(f"📧 Sent email to {to_email}")
     except Exception as e:
         print(f"❌ Email send failed to {to_email}: {e}")
@@ -157,7 +159,7 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             if expected_category == "DevOps":
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
                 send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_CYBER)  # also to Achyuth
+                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_CYBER)
 
             elif expected_category == "EMC":
                 send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
