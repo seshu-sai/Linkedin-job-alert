@@ -30,14 +30,28 @@ TARGET_TITLES_EMC = [
 ]
 
 # Email configuration
-EMAIL_SENDER = "sheshasai263@gmail.com"
-EMAIL_PASSWORD = "ahhk xnob ksho nrbn"
+EMAIL_SENDER = "seshusai71@gmail.com"
+EMAIL_PASSWORD = "vjtb bclr kkak umoi"
 EMAIL_RECEIVER_DEVOPS = "bhanuthigulla22@gmail.com"
-EMAIL_RECEIVER_2 = "seshusai71@gmail.com"
+EMAIL_RECEIVER_2 = "preethampaila389@gmail.com"
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
 
 # Google Sheets setup (Sheet2 used here)
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+GOOGLE_CREDENTIALS = """
+{
+    "type": "service_account",
+    "project_id": "linkedinjobbot-459017",
+    "private_key_id": "462a273e4660ae153a81d72d823406a7b62d6d7e",
+    "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCPrn2vEB1haUZv\\n0BnGzvzFze08scK5LmlbF+BzOGATzmcUExx1iG0ZWXxYyWEwPcIDA6M+cc3CyO0n\\nkqLAFqFMMqnLhfJUFOInX3zGiRr5d/59oDmrQAs/OKinV/DrWbWZ3zLykYykt6YW\\nH8fzXqZVw93WGQu2dHtg7JkLfu/lqHcTupZ8EBM2IoV0eGKbWEN+GFBukiKFxeRN\\nkVf3yNZUaAM3Gl/SsQDeYNhho+cIZ/87FoerueOUXYFgeFMc2RXfpNIQ1TSB4mft\\nHTSOuUZO+9z1DlA2YR6YFP6sg2RWIt2YzeUFhfNHiH0iT5f0Yk4LqVV9gyuJLdJJ\\nGr2+Q3mJAgMBAAECggEAAc1ocRkx39LWllxDX2dopI94MPFGzUZUGnPgHQc8H/jQ\\nTuBFKeaAGoYUvK/yBH8Dm+suin/haTo6BZZIiXrGThnW0eFTDMVpZ4TQkjgchYOB\\nDd8LOicN2YItcaeDiPIKXez+vPMg6GssAzF7Fvfnw9BTTC9ABkCvJcCq8JgWtvoB\\njFnkg7v4iDLGTT4HFBDB//gtpPOngco8ui+/cpaiVefWqUTGMb+2zCqUEQ0twvtJ\\nH3AIRft5+TNYotywp5LEPVBoJx6FqmDPG4L9uH94PoS95HQgQ4C838GvMjGu+8CC\\n/00joP6xGX5JWIb9kmbVlxcsVIC24smpRO6c985XAQKBgQDDnk3mMV3HEMjaPdpa\\nJocK0rBheGDU+dJR1oVcZSqSjlC/U21H03Wv98YRyQ8xylBAd1rvVkwNBO9NZ69f\\nqXkxR4mqGYSeYplxu9Wsqhg9KdEirQMHuT9spC+T3+bvjYxf3ZcncTHvuZeQI+lR\\ntIgoNsStwx4VyGK6gyrLicVtoQKBgQC8CClDCif0sgoJ3ybO0c1KkrdAXiyXy/h2\\naVYALGvO3icBHS7V0ZbVfOP8B1xM11pQ9qYy6y7zTx1cWn7Z+Qnv/J+PfwuPBps5\\n1oeJTDqq5oMR7gLTPl4680XBnLGt8b7GCGWcFIW8+8cBxtUHx4ccr6s6UoOVlFX9\\nvieLLSFy6QKBgQCTj+4ZcDHagVnR74iwKpIB4w70Z9c7sTwrSdSN7y6fIUXeHbO4\\n09XaKOE791xD5eaFysNI+eMiiw9tZ4KOegwW1W0OaHN2+s/fUJ8Nwb3JHatKKhK4\\nF9C1RmExflv5ZuB2THTCZwwRVwHy1HQjkziGhVH19dLTAbcgFOQKZ+ILIQKBgBGd\\nBhh0jBec0dno4F7BQmS455eM+sphXe3hoh+0CYlAQBEXpbp7vpBS+ZwzKE8+YQRy\\nhlEAvM4n3A05oOZUML0dQekUMoX8TXAWi22uCVTW8PIuBG+7SOJmxWMEhZRQr9kn\\nEjWTqo9wWkztTilDZIGoZva4ogDR+1gght2/pYF5AoGBAJ8X4L35/dzppcsYjbr/\\nFHC7EImP67oEmTB6h7bEzk5DaZI0zx9pKR9njX8vnjSQI/b5SAh4W2N7lqAGJK/k\\nfOir5QyACIScGi20eAGvaXovxuyoVLQerKD4tljPWzfjQ8NDEKKoDQoRSze+Py7w\\n7TkGt0Sza97faxq1NMCVMU/L\\n-----END PRIVATE KEY-----\\n",
+    "client_email": "linkedin-search-bot@linkedinjobbot-459017.iam.gserviceaccount.com",
+    "client_id": "104901210164912461111",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/linkedin-search-bot@linkedinjobbot-459017.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+}
+"""
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = json.load(StringIO(GOOGLE_CREDENTIALS))
 CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
