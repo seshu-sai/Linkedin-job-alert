@@ -3,96 +3,124 @@ import smtplib
 from email.mime.text import MIMEText
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask
+from flask import Flask, request, render_template_string
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-from io import StringIO
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
-# DevOps job titles
-TARGET_TITLES_DEVOPS = [
-    "devops engineer", "site reliability engineer", "sre", "cloud engineer",
-    "aws devops engineer", "azure devops engineer", "platform engineer",
-    "infrastructure engineer", "cloud operations engineer", "reliability engineer",
-    "automation engineer", "cloud consultant", "build engineer", "cicd engineer",
-    "systems reliability engineer", "observability engineer", "kubernetes engineer",
-    "devsecops engineer", "infrastructure developer", "platform reliability engineer",
-    "automation specialist"
-]
-
-# EMC/Signal Integrity job titles
-TARGET_TITLES_EMC = [
-    "emc", "signal integrity", "emi/emc", "conducted emission", "radiated emission",
-    "pcb level emi/emc", "antenna simulations", "electromagnetics",
-    "electromagnetic simulations", "interference"
-]
-
-# Email configuration
+# =========================
+# ENV VARIABLES
+# =========================
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
-EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
-EMAIL_RECEIVER_EMC = os.getenv("EMAIL_RECEIVER_EMC")
-
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
+# =========================
+# GOOGLE SHEETS SETUP
+# =========================
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.load(StringIO(GOOGLE_CREDENTIALS))
+
+creds_dict = json.loads(GOOGLE_CREDENTIALS)
+creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
 CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
 client = gspread.authorize(CREDS)
-sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")  # Using Sheet2
+sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
 
-# LinkedIn search config
-BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+# =========================
+# USER STORAGE
+# =========================
+USER_FILE = "users.json"
 
+def load_users():
+    try:
+        with open(USER_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_user(email, titles):
+    users = load_users()
+    users.append({
+        "email": email,
+        "titles": [t.strip().lower() for t in titles.split(",")]
+    })
+    with open(USER_FILE, "w") as f:
+        json.dump(users, f, indent=2)
+
+# =========================
+# EMAIL FUNCTION
+# =========================
 def send_email(subject, body, to_email):
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = to_email
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.send_message(msg)
 
+# =========================
+# GOOGLE SHEET HELPERS
+# =========================
 def job_already_sent(job_url):
     try:
-        existing_urls = sheet.col_values(1)
-        return job_url in existing_urls
-    except Exception as e:
-        print(f"❌ Error reading sheet: {e}")
+        return job_url in sheet.col_values(1)
+    except:
         return False
 
-def mark_job_as_sent(job_url, title, company, location, category, country):
+def mark_job_as_sent(job_url, title, company, location):
     try:
-        sheet.append_row([job_url, title, company, location, category, country])
+        sheet.append_row([job_url, title, company, location])
     except Exception as e:
-        print(f"❌ Error writing to sheet: {e}")
+        print("Sheet error:", e)
 
-def extract_country(location):
-    location_lower = location.lower()
-    if "canada" in location_lower:
-        return "Canada"
-    elif "india" in location_lower:
-        return "India"
-    else:
-        return "Other"
+# =========================
+# LINKEDIN CONFIG
+# =========================
+BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-def process_jobs(query_params, expected_category, expected_country):
-    seen_jobs = set()  # Track duplicates using title+company key
+# =========================
+# CORE LOGIC (STRICT USER FILTERING)
+# =========================
+def process_jobs():
+    users = load_users()
+    print(f"👥 Users loaded: {len(users)}")
 
-    for start in range(0, 100, 25):
-        query_params["start"] = start
+    for user in users:
+        email = user["email"]
+        titles = user["titles"]
+
+        print(f"\n🔍 Processing user: {email}")
+        print(f"   Titles: {titles}")
+
+        # 🔥 Dynamic query per user
+        keywords = " OR ".join(titles)
+
+        query_params = {
+            "keywords": keywords,
+            "location": "Canada",
+            "f_TPR": "r3600",
+            "sortBy": "DD"
+        }
+
         response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
-        if response.status_code != 200 or not response.text.strip():
-            break
+
+        if response.status_code != 200:
+            print(f"❌ Failed for {email}")
+            continue
 
         soup = BeautifulSoup(response.text, "html.parser")
         cards = soup.find_all("li")
-        if not cards:
-            break
+
+        user_jobs = []
 
         for card in cards:
             link_tag = card.select_one('[class*="_full-link"]')
@@ -102,55 +130,77 @@ def process_jobs(query_params, expected_category, expected_country):
 
             if link_tag and title_tag and company_tag:
                 job_url = link_tag['href'].strip().split('?')[0]
+
+                if job_already_sent(job_url):
+                    continue
+
                 title = title_tag.get_text(strip=True)
                 title_lower = title.lower()
                 company = company_tag.get_text(strip=True)
                 location = location_tag.get_text(strip=True) if location_tag else "Unknown"
-                country = extract_country(location)
-                dedup_key = f"{title_lower}::{company.lower()}"
 
-                if dedup_key in seen_jobs or job_already_sent(job_url):
+                # 🔥 IMPORTANT FIX: FILTER PER USER
+                if not any(t in title_lower for t in titles):
+                    print(f"❌ Skipped (not matching): {title}")
                     continue
-                seen_jobs.add(dedup_key)
 
-                email_body = f"{title} at {company} — {location}\n{job_url}"
+                print(f"✅ Matched for {email}: {title}")
 
-                # DevOps (Canada only)
-                if expected_category == "DevOps" and any(t in title_lower for t in TARGET_TITLES_DEVOPS) and country == expected_country:
-                    send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
-                    send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
-                    mark_job_as_sent(job_url, title, company, location, "DevOps", country)
-                    print("✅ Sent DevOps job (Canada):", title)
+                user_jobs.append({
+                    "title": title,
+                    "company": company,
+                    "url": job_url,
+                    "location": location
+                })
 
-                # EMC (India only)
-                elif expected_category == "EMC" and any(t in title_lower for t in TARGET_TITLES_EMC) and country == expected_country:
-                    send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
-                    mark_job_as_sent(job_url, title, company, location, "EMC", country)
-                    print("✅ Sent EMC job (India):", title)
+                mark_job_as_sent(job_url, title, company, location)
 
-def check_new_jobs():
-    # --- Canada DevOps Jobs ---
-    devops_query = {
-        "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
-        "location": "Canada",
-        "f_TPR": "r3600",
-        "sortBy": "DD"
-    }
-    process_jobs(devops_query, "DevOps", "Canada")
+        # =========================
+        # SEND EMAIL
+        # =========================
+        if user_jobs:
+            body = "\n\n".join(
+                [f"{j['title']} at {j['company']} ({j['location']})\n{j['url']}" for j in user_jobs]
+            )
 
-    # --- India EMC Jobs ---
-    emc_query = {
-        "keywords": " OR ".join(TARGET_TITLES_EMC),
-        "location": "India",
-        "f_TPR": "r3600",
-        "sortBy": "DD"
-    }
-    process_jobs(emc_query, "EMC", "India")
+            send_email("🚨 Your Job Alerts", body, email)
+            print(f"📧 Email sent to {email} ({len(user_jobs)} jobs)")
+        else:
+            print(f"❌ No jobs found for {email}")
 
+# =========================
+# UI ROUTE
+# =========================
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        email = request.form.get("email")
+        titles = request.form.get("titles")
+
+        save_user(email, titles)
+        return "✅ Registered!"
+
+    return render_template_string("""
+        <h2>Job Alert Signup</h2>
+        <form method="post">
+            Email:<br>
+            <input type="email" name="email"><br><br>
+            Job Titles (comma separated):<br>
+            <textarea name="titles"></textarea><br><br>
+            <button type="submit">Submit</button>
+        </form>
+    """)
+
+# =========================
+# TRIGGER
+# =========================
 @app.route("/")
-def ping():
-    check_new_jobs()
-    return "✅ Checked for DevOps (Canada) and EMC (India) jobs."
+def run_jobs():
+    process_jobs()
+    return "✅ Jobs processed!"
 
+# =========================
+# RUN APP
+# =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(host="0.0.0.0", port=8080)
