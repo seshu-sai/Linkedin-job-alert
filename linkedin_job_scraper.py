@@ -7,9 +7,7 @@ from flask import Flask, request, render_template_string
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-from dotenv import load_dotenv
 
-load_dotenv()
 
 app = Flask(__name__)
 
@@ -88,85 +86,71 @@ BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/sear
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =========================
-# CORE LOGIC (STRICT USER FILTERING)
+# CORE LOGIC (FINAL)
 # =========================
 def process_jobs():
     users = load_users()
     print(f"👥 Users loaded: {len(users)}")
 
-    for user in users:
-        email = user["email"]
-        titles = user["titles"]
+    # 🔥 Broad search once
+    query_params = {
+        "keywords": "developer OR engineer OR devops OR java OR cloud",
+        "location": "Canada",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
 
-        print(f"\n🔍 Processing user: {email}")
-        print(f"   Titles: {titles}")
+    response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
 
-        # 🔥 Dynamic query per user
-        keywords = " OR ".join(titles)
+    if response.status_code != 200:
+        print("❌ Failed to fetch jobs")
+        return
 
-        query_params = {
-            "keywords": keywords,
-            "location": "Canada",
-            "f_TPR": "r3600",
-            "sortBy": "DD"
-        }
+    soup = BeautifulSoup(response.text, "html.parser")
+    cards = soup.find_all("li")
 
-        response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
+    for card in cards:
+        link_tag = card.select_one('[class*="_full-link"]')
+        title_tag = card.select_one('[class*="_title"]')
+        company_tag = card.select_one('[class*="_subtitle"]')
+        location_tag = card.select_one('[class*="_location"]')
 
-        if response.status_code != 200:
-            print(f"❌ Failed for {email}")
-            continue
+        if link_tag and title_tag and company_tag:
+            job_url = link_tag['href'].strip().split('?')[0]
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        cards = soup.find_all("li")
+            # ❌ Skip duplicates globally
+            if job_already_sent(job_url):
+                continue
 
-        user_jobs = []
+            title = title_tag.get_text(strip=True)
+            title_lower = title.lower()
+            company = company_tag.get_text(strip=True)
+            location = location_tag.get_text(strip=True) if location_tag else "Unknown"
 
-        for card in cards:
-            link_tag = card.select_one('[class*="_full-link"]')
-            title_tag = card.select_one('[class*="_title"]')
-            company_tag = card.select_one('[class*="_subtitle"]')
-            location_tag = card.select_one('[class*="_location"]')
+            print(f"\n🔍 Processing job: {title}")
 
-            if link_tag and title_tag and company_tag:
-                job_url = link_tag['href'].strip().split('?')[0]
+            matched_users = []
 
-                if job_already_sent(job_url):
-                    continue
+            # 🔥 Match users
+            for user in users:
+                if any(t in title_lower for t in user["titles"]):
+                    matched_users.append(user["email"])
 
-                title = title_tag.get_text(strip=True)
-                title_lower = title.lower()
-                company = company_tag.get_text(strip=True)
-                location = location_tag.get_text(strip=True) if location_tag else "Unknown"
+            # ❌ No match → skip
+            if not matched_users:
+                print("❌ No matching users")
+                continue
 
-                # 🔥 IMPORTANT FIX: FILTER PER USER
-                if not any(t in title_lower for t in titles):
-                    print(f"❌ Skipped (not matching): {title}")
-                    continue
+            body = f"{title} at {company} ({location})\n{job_url}"
 
-                print(f"✅ Matched for {email}: {title}")
+            # ✅ Send to each matched user (ONLY ONCE PER JOB)
+            for email in matched_users:
+                send_email("🚨 New Job Alert", body, email)
 
-                user_jobs.append({
-                    "title": title,
-                    "company": company,
-                    "url": job_url,
-                    "location": location
-                })
+            print(f"📧 Sent to: {matched_users}")
 
-                mark_job_as_sent(job_url, title, company, location)
-
-        # =========================
-        # SEND EMAIL
-        # =========================
-        if user_jobs:
-            body = "\n\n".join(
-                [f"{j['title']} at {j['company']} ({j['location']})\n{j['url']}" for j in user_jobs]
-            )
-
-            send_email("🚨 Your Job Alerts", body, email)
-            print(f"📧 Email sent to {email} ({len(user_jobs)} jobs)")
-        else:
-            print(f"❌ No jobs found for {email}")
+            # ✅ Mark job as sent AFTER sending
+            mark_job_as_sent(job_url, title, company, location)
 
 # =========================
 # UI ROUTE
