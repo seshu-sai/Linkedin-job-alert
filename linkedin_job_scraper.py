@@ -1,18 +1,17 @@
 import os
+import smtplib
+from email.mime.text import MIMEText
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from io import StringIO
 
 app = Flask(__name__)
 
-# -------------------------
-# Job Titles
-# -------------------------
+# DevOps job titles
 TARGET_TITLES_DEVOPS = [
     "devops engineer", "site reliability engineer", "sre", "cloud engineer",
     "aws devops engineer", "azure devops engineer", "platform engineer",
@@ -23,83 +22,52 @@ TARGET_TITLES_DEVOPS = [
     "automation specialist"
 ]
 
+# EMC/Signal Integrity job titles
 TARGET_TITLES_EMC = [
     "emc", "signal integrity", "emi/emc", "conducted emission", "radiated emission",
     "pcb level emi/emc", "antenna simulations", "electromagnetics",
     "electromagnetic simulations", "interference"
 ]
 
-TARGET_TITLES_CYBER = [
-    "cybersecurity analyst", "soc analyst", "incident response analyst", "threat detection analyst",
-    "siem analyst", "splunk analyst", "qradar analyst", "sentinel analyst", "sr. cybersecurity analyst",
-    "security monitoring analyst", "information security analyst", "edr analyst", "cloud security analyst",
-    "azure security analyst", "aws security analyst", "iam analyst", "iam engineer",
-    "identity & access specialist", "identity governance analyst",
-    "privileged access management engineer", "sailpoint developer",
-    "okta administrator", "access control analyst", "azure iam engineer", "cloud iam analyst"
-]
-
-# -------------------------
-# SendGrid Config
-# -------------------------
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-FROM_EMAIL = os.getenv("FROM_EMAIL")  # must be your verified sender in SendGrid
+# Email configuration
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER_DEVOPS = os.getenv("EMAIL_RECEIVER_DEVOPS")
 EMAIL_RECEIVER_2 = os.getenv("EMAIL_RECEIVER_2")
 EMAIL_RECEIVER_EMC = "Dushyanthgala@gmail.com"
-EMAIL_RECEIVER_CYBER = "achyuth2806@gmail.com"
 
-# -------------------------
-# Google Sheets Setup
-# -------------------------
+# Google Sheets setup (Sheet2 used here)
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-creds_dict = json.loads(GOOGLE_CREDENTIALS)
+creds_dict = json.load(StringIO(GOOGLE_CREDENTIALS))
 CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
 client = gspread.authorize(CREDS)
-sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
+sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")  # Using Sheet2
 
-# -------------------------
-# LinkedIn Config
-# -------------------------
+# LinkedIn search config
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# -------------------------
-# Helpers
-# -------------------------
 def send_email(subject, body, to_email):
-    """Send email via SendGrid"""
-    if not to_email:
-        return
-    message = Mail(
-        from_email=FROM_EMAIL,
-        to_emails=to_email,
-        subject=subject,
-        plain_text_content=body
-    )
-    try:
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        sg.send(message)
-        print(f"📧 Sent email to {to_email}")
-    except Exception as e:
-        print(f"❌ Email send failed to {to_email}: {e}")
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_SENDER
+    msg["To"] = to_email
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.send_message(msg)
 
-def load_sent_urls():
-    """Read sheet only once per run"""
+def job_already_sent(job_url):
     try:
-        urls = sheet.col_values(1)
-        return set(urls or [])
+        existing_urls = sheet.col_values(1)
+        return job_url in existing_urls
     except Exception as e:
         print(f"❌ Error reading sheet: {e}")
-        return set()
+        return False
 
-def append_rows_batch(rows):
-    """Batch write new rows"""
+def mark_job_as_sent(job_url, title, company, location, category, country):
     try:
-        if rows:
-            sheet.append_rows(rows, value_input_option="RAW")
+        sheet.append_row([job_url, title, company, location, category, country])
     except Exception as e:
         print(f"❌ Error writing to sheet: {e}")
 
@@ -107,15 +75,13 @@ def extract_country(location):
     location_lower = location.lower()
     if "canada" in location_lower:
         return "Canada"
-    if "india" in location_lower:
+    elif "india" in location_lower:
         return "India"
-    return "Other"
+    else:
+        return "Other"
 
-# -------------------------
-# Core Logic
-# -------------------------
-def process_jobs(query_params, expected_category, expected_country, title_list, sent_urls, rows_out):
-    seen_jobs = set()
+def process_jobs(query_params, expected_category, expected_country):
+    seen_jobs = set()  # Track duplicates using title+company key
 
     for start in range(0, 100, 25):
         query_params["start"] = start
@@ -134,65 +100,57 @@ def process_jobs(query_params, expected_category, expected_country, title_list, 
             company_tag = card.select_one('[class*="_subtitle"]')
             location_tag = card.select_one('[class*="_location"]')
 
-            if not (link_tag and title_tag and company_tag):
-                continue
+            if link_tag and title_tag and company_tag:
+                job_url = link_tag['href'].strip().split('?')[0]
+                title = title_tag.get_text(strip=True)
+                title_lower = title.lower()
+                company = company_tag.get_text(strip=True)
+                location = location_tag.get_text(strip=True) if location_tag else "Unknown"
+                country = extract_country(location)
+                dedup_key = f"{title_lower}::{company.lower()}"
 
-            job_url = (link_tag["href"] or "").strip().split("?")[0]
-            title = title_tag.get_text(strip=True)
-            title_lower = title.lower()
-            company = company_tag.get_text(strip=True)
-            location = location_tag.get_text(strip=True) if location_tag else "Unknown"
-            country = extract_country(location)
+                if dedup_key in seen_jobs or job_already_sent(job_url):
+                    continue
+                seen_jobs.add(dedup_key)
 
-            dedup_key = f"{title_lower}::{company.lower()}"
-            if dedup_key in seen_jobs or job_url in sent_urls:
-                continue
-            seen_jobs.add(dedup_key)
+                email_body = f"{title} at {company} — {location}\n{job_url}"
 
-            if country != expected_country:
-                continue
-            if not any(t in title_lower for t in title_list):
-                continue
+                # DevOps (Canada only)
+                if expected_category == "DevOps" and any(t in title_lower for t in TARGET_TITLES_DEVOPS) and country == expected_country:
+                    send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
+                    send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
+                    mark_job_as_sent(job_url, title, company, location, "DevOps", country)
+                    print("✅ Sent DevOps job (Canada):", title)
 
-            email_body = f"{title} at {company} — {location}\n{job_url}"
-
-            if expected_category == "DevOps":
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_DEVOPS)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_2)
-                send_email("🚨 New DevOps/SRE Job!", email_body, EMAIL_RECEIVER_CYBER)
-
-            elif expected_category == "EMC":
-                send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
-
-            elif expected_category == "Cybersecurity":
-                send_email("🛡️ New Cybersecurity Job!", email_body, EMAIL_RECEIVER_CYBER)
-
-            rows_out.append([job_url, title, company, location, expected_category, country])
-            sent_urls.add(job_url)
-            print(f"✅ Sent {expected_category} job ({country}): {title}")
+                # EMC (India only)
+                elif expected_category == "EMC" and any(t in title_lower for t in TARGET_TITLES_EMC) and country == expected_country:
+                    send_email("📡 New EMC/Signal Integrity Job!", email_body, EMAIL_RECEIVER_EMC)
+                    mark_job_as_sent(job_url, title, company, location, "EMC", country)
+                    print("✅ Sent EMC job (India):", title)
 
 def check_new_jobs():
-    sent_urls = load_sent_urls()
-    rows_out = []
+    # --- Canada DevOps Jobs ---
+    devops_query = {
+        "keywords": " OR ".join(TARGET_TITLES_DEVOPS),
+        "location": "Canada",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
+    process_jobs(devops_query, "DevOps", "Canada")
 
-    devops_query = {"keywords": " OR ".join(TARGET_TITLES_DEVOPS), "location": "Canada", "f_TPR": "r3600", "sortBy": "DD"}
-    process_jobs(devops_query, "DevOps", "Canada", TARGET_TITLES_DEVOPS, sent_urls, rows_out)
+    # --- India EMC Jobs ---
+    emc_query = {
+        "keywords": " OR ".join(TARGET_TITLES_EMC),
+        "location": "India",
+        "f_TPR": "r3600",
+        "sortBy": "DD"
+    }
+    process_jobs(emc_query, "EMC", "India")
 
-    emc_query = {"keywords": " OR ".join(TARGET_TITLES_EMC), "location": "India", "f_TPR": "r3600", "sortBy": "DD"}
-    process_jobs(emc_query, "EMC", "India", TARGET_TITLES_EMC, sent_urls, rows_out)
-
-    cyber_query = {"keywords": " OR ".join(TARGET_TITLES_CYBER), "location": "Canada", "f_TPR": "r3600", "sortBy": "DD"}
-    process_jobs(cyber_query, "Cybersecurity", "Canada", TARGET_TITLES_CYBER, sent_urls, rows_out)
-
-    append_rows_batch(rows_out)
-
-# -------------------------
-# Flask Endpoint
-# -------------------------
 @app.route("/")
 def ping():
     check_new_jobs()
-    return "✅ Checked and sent job alerts."
+    return "✅ Checked for DevOps (Canada) and EMC (India) jobs."
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
