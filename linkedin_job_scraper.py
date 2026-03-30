@@ -75,7 +75,6 @@ def save_user(email, titles):
             print(f"🔁 Updated user: {email}")
             return
 
-    # new user
     user_sheet.append_row([email, ",".join(sorted(new_titles))])
     print(f"✅ New user added: {email}")
 
@@ -109,24 +108,20 @@ def mark_job_as_sent(job_url, title, company, location):
         pass
 
 # =========================
-# PROCESS JOBS (OPTIMIZED)
+# PROCESS JOBS
 # =========================
 def process_jobs():
     users = load_users()
 
-    # 🔥 Collect all unique titles
     all_titles = set()
     for user in users:
         for t in user["titles"]:
-            if t:
-                all_titles.add(t)
+            all_titles.add(t)
 
     if not all_titles:
-        print("❌ No keywords found")
         return
 
     keywords = " OR ".join(all_titles)
-    print(f"🔍 Keywords: {keywords}")
 
     query_params = {
         "keywords": keywords,
@@ -138,7 +133,6 @@ def process_jobs():
     response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
 
     if response.status_code != 200:
-        print("❌ Job fetch failed")
         return
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -175,7 +169,7 @@ def process_jobs():
             mark_job_as_sent(job_url, title, company, "Canada")
 
 # =========================
-# STRIPE REGISTER
+# MODERN UI REGISTER PAGE
 # =========================
 @app.route("/register")
 def register():
@@ -183,121 +177,67 @@ def register():
 <!DOCTYPE html>
 <html>
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Job Alerts</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Alerts</title>
 
-  <style>
-    body {
-      margin: 0;
-      font-family: 'Segoe UI', sans-serif;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-    }
-
-    .card {
-      background: white;
-      padding: 30px;
-      border-radius: 15px;
-      width: 90%;
-      max-width: 420px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-      text-align: center;
-    }
-
-    h2 {
-      margin-bottom: 10px;
-      color: #333;
-    }
-
-    p {
-      font-size: 14px;
-      color: #777;
-      margin-bottom: 20px;
-    }
-
-    input, textarea {
-      width: 100%;
-      padding: 12px;
-      margin-top: 10px;
-      margin-bottom: 15px;
-      border-radius: 10px;
-      border: 1px solid #ccc;
-      font-size: 14px;
-      transition: 0.2s;
-    }
-
-    input:focus, textarea:focus {
-      border-color: #667eea;
-      outline: none;
-      box-shadow: 0 0 5px rgba(102,126,234,0.5);
-    }
-
-    textarea {
-      resize: none;
-      height: 90px;
-    }
-
-    button {
-      width: 100%;
-      padding: 14px;
-      border: none;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      color: white;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: 0.3s;
-    }
-
-    button:hover {
-      opacity: 0.9;
-      transform: scale(1.02);
-    }
-
-    .footer {
-      margin-top: 15px;
-      font-size: 12px;
-      color: #999;
-    }
-
-    @media (max-width: 480px) {
-      .card {
-        padding: 20px;
-      }
-    }
-  </style>
+<style>
+body {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+.card {
+  background: white;
+  padding: 30px;
+  border-radius: 15px;
+  width: 90%;
+  max-width: 420px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  text-align: center;
+}
+h2 { color: #333; }
+input, textarea {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  margin-bottom: 15px;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+}
+button {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+}
+</style>
 </head>
 
 <body>
 
-  <div class="card">
-    <h2>🚀 Job Alerts</h2>
-    <p>Get real-time job alerts directly to your inbox</p>
+<div class="card">
+<h2>🚀 Job Alerts</h2>
 
-    <form action="/create-checkout-session" method="post">
+<form action="/create-checkout-session" method="post">
+<input type="email" name="email" placeholder="Enter your email" required>
+<textarea name="titles" placeholder="devops engineer, java developer, sre" required></textarea>
+<button type="submit">Subscribe for $5</button>
+</form>
 
-      <input type="email" name="email" placeholder="Enter your email" required>
-
-      <textarea name="titles" placeholder="e.g. devops engineer, java developer, sre" required></textarea>
-
-      <button type="submit" onclick="this.innerText='Processing...'; this.disabled=true;">
-        Subscribe for $5
-      </button>
-
-    </form>
-
-    <div class="footer">
-      🔔 Instant alerts • 💼 Latest jobs • 📩 Direct email
-    </div>
-  </div>
+</div>
 
 </body>
 </html>
 """)
+
 # =========================
 # STRIPE CHECKOUT
 # =========================
@@ -312,23 +252,20 @@ def create_checkout_session():
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Job Alerts"},
-                "unit_amount": 50,
+                "unit_amount": 500,
             },
             "quantity": 1,
         }],
         mode="payment",
-        metadata={
-            "email": email,
-            "titles": titles
-        },
-        success_url="https://linkedin-job-alert-7uhw.onrender.com/success",
-        cancel_url="https://linkedin-job-alert-7uhw.onrender.com/register",
+        metadata={"email": email, "titles": titles},
+        success_url="https://your-app.onrender.com/success",
+        cancel_url="https://your-app.onrender.com/register",
     )
 
     return redirect(session.url)
 
 # =========================
-# STRIPE WEBHOOK
+# WEBHOOK
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -336,29 +273,22 @@ def webhook():
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, endpoint_secret
-        )
-    except Exception as e:
-        print("❌ Webhook error:", e)
+        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+    except Exception:
         return "", 400
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
-
-        email = session["metadata"]["email"]
-        titles = session["metadata"]["titles"]
-
-        save_user(email, titles)
+        save_user(session["metadata"]["email"], session["metadata"]["titles"])
 
     return "", 200
 
 # =========================
-# SUCCESS PAGE
+# SUCCESS
 # =========================
 @app.route("/success")
 def success():
-    return "✅ Payment successful! You will start receiving job alerts."
+    return "✅ Payment successful!"
 
 # =========================
 # RUN JOBS
@@ -369,7 +299,7 @@ def run_jobs():
     return "Jobs processed"
 
 # =========================
-# RUN APP
+# RUN
 # =========================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
