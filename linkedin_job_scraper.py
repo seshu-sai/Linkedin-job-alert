@@ -18,6 +18,7 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 stripe.api_key = os.getenv("STRIPE_API_KEY")
+endpoint_secret = os.getenv("WEBHOOK_KEY")
 
 # =========================
 # GOOGLE SHEETS
@@ -178,7 +179,7 @@ def create_checkout_session():
             "email": email,
             "titles": titles
         },
-        success_url="http://localhost:8080/success",
+        success_url="https://your-app.onrender.com/success",
         cancel_url="http://localhost:8080/register",
     )
 
@@ -189,8 +190,16 @@ def create_checkout_session():
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    payload = request.get_data(as_text=True)
-    event = json.loads(payload)
+    payload = request.data
+    sig_header = request.headers.get("Stripe-Signature")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
+    except Exception as e:
+        print("❌ Webhook signature error:", e)
+        return "", 400
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
@@ -199,6 +208,7 @@ def webhook():
         titles = session["metadata"]["titles"]
 
         save_user(email, titles)
+        print(f"✅ Saved user: {email}")
 
     return "", 200
 
