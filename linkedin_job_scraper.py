@@ -3,23 +3,24 @@ import smtplib
 from email.mime.text import MIMEText
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, redirect
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-
+import stripe
 
 app = Flask(__name__)
 
 # =========================
-# ENV VARIABLES
+# CONFIG
 # =========================
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+stripe.api_key = os.getenv("STRIPE_API_KEY")
 
 # =========================
-# GOOGLE SHEETS SETUP
+# GOOGLE SHEETS
 # =========================
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
@@ -76,8 +77,8 @@ def job_already_sent(job_url):
 def mark_job_as_sent(job_url, title, company, location):
     try:
         sheet.append_row([job_url, title, company, location])
-    except Exception as e:
-        print("Sheet error:", e)
+    except:
+        pass
 
 # =========================
 # LINKEDIN CONFIG
@@ -86,13 +87,11 @@ BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/sear
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =========================
-# CORE LOGIC (FINAL)
+# JOB PROCESSING
 # =========================
 def process_jobs():
     users = load_users()
-    print(f"👥 Users loaded: {len(users)}")
 
-    # 🔥 Broad search once
     query_params = {
         "keywords": "developer OR engineer OR devops OR java OR cloud",
         "location": "Canada",
@@ -103,7 +102,6 @@ def process_jobs():
     response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
 
     if response.status_code != 200:
-        print("❌ Failed to fetch jobs")
         return
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -113,78 +111,114 @@ def process_jobs():
         link_tag = card.select_one('[class*="_full-link"]')
         title_tag = card.select_one('[class*="_title"]')
         company_tag = card.select_one('[class*="_subtitle"]')
-        location_tag = card.select_one('[class*="_location"]')
 
         if link_tag and title_tag and company_tag:
-            job_url = link_tag['href'].strip().split('?')[0]
+            job_url = link_tag['href'].split('?')[0]
 
-            # ❌ Skip duplicates globally
             if job_already_sent(job_url):
                 continue
 
-            title = title_tag.get_text(strip=True)
-            title_lower = title.lower()
+            title = title_tag.get_text(strip=True).lower()
             company = company_tag.get_text(strip=True)
-            location = location_tag.get_text(strip=True) if location_tag else "Unknown"
-
-            print(f"\n🔍 Processing job: {title}")
 
             matched_users = []
 
-            # 🔥 Match users
             for user in users:
-                if any(t in title_lower for t in user["titles"]):
+                if any(t in title for t in user["titles"]):
                     matched_users.append(user["email"])
 
-            # ❌ No match → skip
             if not matched_users:
-                print("❌ No matching users")
                 continue
 
-            body = f"{title} at {company} ({location})\n{job_url}"
+            body = f"{title} at {company}\n{job_url}"
 
-            # ✅ Send to each matched user (ONLY ONCE PER JOB)
             for email in matched_users:
-                send_email("🚨 New Job Alert", body, email)
+                send_email("🚨 Job Alert", body, email)
 
-            print(f"📧 Sent to: {matched_users}")
-
-            # ✅ Mark job as sent AFTER sending
-            mark_job_as_sent(job_url, title, company, location)
+            mark_job_as_sent(job_url, title, company, "Canada")
 
 # =========================
-# UI ROUTE
+# STRIPE REGISTER PAGE
 # =========================
-@app.route("/register", methods=["GET", "POST"])
+@app.route("/register")
 def register():
-    if request.method == "POST":
-        email = request.form.get("email")
-        titles = request.form.get("titles")
-
-        save_user(email, titles)
-        return "✅ Registered!"
-
     return render_template_string("""
-        <h2>Job Alert Signup</h2>
-        <form method="post">
+        <h2>Subscribe for Job Alerts</h2>
+        <form action="/create-checkout-session" method="post">
             Email:<br>
             <input type="email" name="email"><br><br>
-            Job Titles (comma separated):<br>
+
+            Job Titles:<br>
             <textarea name="titles"></textarea><br><br>
-            <button type="submit">Submit</button>
+
+            <button type="submit">Subscribe ($5)</button>
         </form>
     """)
 
 # =========================
-# TRIGGER
+# STRIPE CHECKOUT
+# =========================
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout_session():
+    email = request.form.get("email")
+    titles = request.form.get("titles")
+
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{
+            "price_data": {
+                "currency": "usd",
+                "product_data": {"name": "Job Alerts"},
+                "unit_amount": 50,
+            },
+            "quantity": 1,
+        }],
+        mode="payment",
+        metadata={
+            "email": email,
+            "titles": titles
+        },
+        success_url="http://localhost:8080/success",
+        cancel_url="http://localhost:8080/register",
+    )
+
+    return redirect(session.url)
+
+# =========================
+# WEBHOOK (CRITICAL)
+# =========================
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    payload = request.get_data(as_text=True)
+    event = json.loads(payload)
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+
+        email = session["metadata"]["email"]
+        titles = session["metadata"]["titles"]
+
+        save_user(email, titles)
+
+    return "", 200
+
+# =========================
+# SUCCESS PAGE
+# =========================
+@app.route("/success")
+def success():
+    return "✅ Payment successful! Subscription activated."
+
+# =========================
+# RUN JOBS
 # =========================
 @app.route("/")
 def run_jobs():
     process_jobs()
-    return "✅ Jobs processed!"
+    return "Jobs processed"
 
 # =========================
 # RUN APP
 # =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(port=8080)
