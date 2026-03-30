@@ -17,11 +17,15 @@ app = Flask(__name__)
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+
 stripe.api_key = os.getenv("STRIPE_API_KEY")
 endpoint_secret = os.getenv("WEBHOOK_KEY")
 
+BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
 # =========================
-# GOOGLE SHEETS
+# GOOGLE SHEETS SETUP
 # =========================
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
@@ -30,31 +34,53 @@ creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
 CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
 client = gspread.authorize(CREDS)
-sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
+
+job_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
+user_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet6")
 
 # =========================
-# USER STORAGE
+# USERS (NO DUPLICATES)
 # =========================
-USER_FILE = "users.json"
-
 def load_users():
-    try:
-        with open(USER_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return []
+    rows = user_sheet.get_all_values()
+    users = []
+
+    for row in rows:
+        if len(row) >= 2:
+            email = row[0].strip().lower()
+            titles = row[1].strip()
+
+            users.append({
+                "email": email,
+                "titles": [t.strip().lower() for t in titles.split(",") if t.strip()]
+            })
+
+    return users
+
 
 def save_user(email, titles):
-    users = load_users()
-    users.append({
-        "email": email,
-        "titles": [t.strip().lower() for t in titles.split(",")]
-    })
-    with open(USER_FILE, "w") as f:
-        json.dump(users, f, indent=2)
+    email = email.strip().lower()
+    new_titles = set([t.strip().lower() for t in titles.split(",") if t.strip()])
+
+    rows = user_sheet.get_all_values()
+
+    for idx, row in enumerate(rows, start=1):
+        if len(row) >= 1 and row[0].strip().lower() == email:
+            existing_titles = set(row[1].split(",")) if len(row) > 1 else set()
+
+            merged = existing_titles.union(new_titles)
+            updated_titles = ",".join(sorted(merged))
+
+            user_sheet.update_cell(idx, 2, updated_titles)
+            print(f"🔁 Updated user: {email}")
+            return
+
+    # new user
+    user_sheet.append_row([email, ",".join(sorted(new_titles))])
+    print(f"✅ New user added: {email}")
 
 # =========================
-# EMAIL FUNCTION
+# EMAIL
 # =========================
 def send_email(subject, body, to_email):
     msg = MIMEText(body)
@@ -67,34 +93,43 @@ def send_email(subject, body, to_email):
         server.send_message(msg)
 
 # =========================
-# GOOGLE SHEET HELPERS
+# JOB DEDUP
 # =========================
 def job_already_sent(job_url):
     try:
-        return job_url in sheet.col_values(1)
+        return job_url in job_sheet.col_values(1)
     except:
         return False
 
+
 def mark_job_as_sent(job_url, title, company, location):
     try:
-        sheet.append_row([job_url, title, company, location])
+        job_sheet.append_row([job_url, title, company, location])
     except:
         pass
 
 # =========================
-# LINKEDIN CONFIG
-# =========================
-BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-# =========================
-# JOB PROCESSING
+# PROCESS JOBS (OPTIMIZED)
 # =========================
 def process_jobs():
     users = load_users()
 
+    # 🔥 Collect all unique titles
+    all_titles = set()
+    for user in users:
+        for t in user["titles"]:
+            if t:
+                all_titles.add(t)
+
+    if not all_titles:
+        print("❌ No keywords found")
+        return
+
+    keywords = " OR ".join(all_titles)
+    print(f"🔍 Keywords: {keywords}")
+
     query_params = {
-        "keywords": "developer OR engineer OR devops OR java OR cloud",
+        "keywords": keywords,
         "location": "Canada",
         "f_TPR": "r3600",
         "sortBy": "DD"
@@ -103,6 +138,7 @@ def process_jobs():
     response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
 
     if response.status_code != 200:
+        print("❌ Job fetch failed")
         return
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -139,7 +175,7 @@ def process_jobs():
             mark_job_as_sent(job_url, title, company, "Canada")
 
 # =========================
-# STRIPE REGISTER PAGE
+# STRIPE REGISTER
 # =========================
 @app.route("/register")
 def register():
@@ -147,10 +183,10 @@ def register():
         <h2>Subscribe for Job Alerts</h2>
         <form action="/create-checkout-session" method="post">
             Email:<br>
-            <input type="email" name="email"><br><br>
+            <input type="email" name="email" required><br><br>
 
-            Job Titles:<br>
-            <textarea name="titles"></textarea><br><br>
+            Job Titles (comma separated):<br>
+            <textarea name="titles" required></textarea><br><br>
 
             <button type="submit">Subscribe ($5)</button>
         </form>
@@ -170,7 +206,7 @@ def create_checkout_session():
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Job Alerts"},
-                "unit_amount": 50,
+                "unit_amount": 500,
             },
             "quantity": 1,
         }],
@@ -186,7 +222,7 @@ def create_checkout_session():
     return redirect(session.url)
 
 # =========================
-# WEBHOOK (CRITICAL)
+# STRIPE WEBHOOK
 # =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -198,7 +234,7 @@ def webhook():
             payload, sig_header, endpoint_secret
         )
     except Exception as e:
-        print("❌ Webhook signature error:", e)
+        print("❌ Webhook error:", e)
         return "", 400
 
     if event["type"] == "checkout.session.completed":
@@ -208,7 +244,6 @@ def webhook():
         titles = session["metadata"]["titles"]
 
         save_user(email, titles)
-        print(f"✅ Saved user: {email}")
 
     return "", 200
 
@@ -217,7 +252,7 @@ def webhook():
 # =========================
 @app.route("/success")
 def success():
-    return "✅ Payment successful! Subscription activated."
+    return "✅ Payment successful! You will start receiving job alerts."
 
 # =========================
 # RUN JOBS
