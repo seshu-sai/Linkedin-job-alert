@@ -206,7 +206,7 @@ def create_checkout_session():
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Job Alerts"},
-                "unit_amount": 500,
+                "unit_amount": 50,
             },
             "quantity": 1,
         }],
