@@ -180,18 +180,124 @@ def process_jobs():
 @app.route("/register")
 def register():
     return render_template_string("""
-        <h2>Subscribe for Job Alerts</h2>
-        <form action="/create-checkout-session" method="post">
-            Email:<br>
-            <input type="email" name="email" required><br><br>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Alerts</title>
 
-            Job Titles (comma separated):<br>
-            <textarea name="titles" required></textarea><br><br>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
 
-            <button type="submit">Subscribe ($5)</button>
-        </form>
-    """)
+    .card {
+      background: white;
+      padding: 30px;
+      border-radius: 15px;
+      width: 90%;
+      max-width: 420px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      text-align: center;
+    }
 
+    h2 {
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    p {
+      font-size: 14px;
+      color: #777;
+      margin-bottom: 20px;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 12px;
+      margin-top: 10px;
+      margin-bottom: 15px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+      transition: 0.2s;
+    }
+
+    input:focus, textarea:focus {
+      border-color: #667eea;
+      outline: none;
+      box-shadow: 0 0 5px rgba(102,126,234,0.5);
+    }
+
+    textarea {
+      resize: none;
+      height: 90px;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    button:hover {
+      opacity: 0.9;
+      transform: scale(1.02);
+    }
+
+    .footer {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #999;
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="card">
+    <h2>🚀 Job Alerts</h2>
+    <p>Get real-time job alerts directly to your inbox</p>
+
+    <form action="/create-checkout-session" method="post">
+
+      <input type="email" name="email" placeholder="Enter your email" required>
+
+      <textarea name="titles" placeholder="e.g. devops engineer, java developer, sre" required></textarea>
+
+      <button type="submit" onclick="this.innerText='Processing...'; this.disabled=true;">
+        Subscribe for $5
+      </button>
+
+    </form>
+
+    <div class="footer">
+      🔔 Instant alerts • 💼 Latest jobs • 📩 Direct email
+    </div>
+  </div>
+
+</body>
+</html>
+""")
 # =========================
 # STRIPE CHECKOUT
 # =========================
