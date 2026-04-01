@@ -258,8 +258,8 @@ def create_checkout_session():
         }],
         mode="payment",
         metadata={"email": email, "titles": titles},
-        success_url="https://your-app.onrender.com/success",
-        cancel_url="https://your-app.onrender.com/register",
+        success_url="https://linkedin-job-alert-7uhw.onrender.com/success",
+        cancel_url="https://linkedin-job-alert-7uhw.onrender.com/register",
     )
 
     return redirect(session.url)
