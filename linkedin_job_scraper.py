@@ -1,250 +1,228 @@
 import os
+import re
+import json
+import time
+import logging
+import threading
 import smtplib
+from typing import Dict, Set, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.mime.text import MIMEText
+
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, request, render_template_string, redirect
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 import stripe
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# =========================
-# CONFIG
-# =========================
+# ================= CONFIG =================
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
 stripe.api_key = os.getenv("STRIPE_API_KEY")
-endpoint_secret = os.getenv("WEBHOOK_KEY")
+WEBHOOK_KEY = os.getenv("WEBHOOK_KEY")
 
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# =========================
-# GOOGLE SHEETS SETUP
-# =========================
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+MAX_FETCH_WORKERS = 6
+MAX_EMAIL_WORKERS = 10
+CHUNK_SIZE = 20
+
+# ================= GOOGLE SHEETS =================
+scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
 
 creds_dict = json.loads(GOOGLE_CREDENTIALS)
 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
-CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-client = gspread.authorize(CREDS)
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
 
-job_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
 user_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet6")
+job_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
 
-# =========================
-# USERS (NO DUPLICATES)
-# =========================
-def load_users():
-    rows = user_sheet.get_all_values()
-    users = []
+# ================= HELPERS =================
+def normalize(text):
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
 
-    for row in rows:
-        if len(row) >= 2:
-            email = row[0].strip().lower()
-            titles = row[1].strip()
-
-            users.append({
-                "email": email,
-                "titles": [t.strip().lower() for t in titles.split(",") if t.strip()]
-            })
-
-    return users
-
-
-def save_user(email, titles):
-    email = email.strip().lower()
-    new_titles = set([t.strip().lower() for t in titles.split(",") if t.strip()])
-
-    rows = user_sheet.get_all_values()
-
-    for idx, row in enumerate(rows, start=1):
-        if len(row) >= 1 and row[0].strip().lower() == email:
-            existing_titles = set(row[1].split(",")) if len(row) > 1 else set()
-
-            merged = existing_titles.union(new_titles)
-            updated_titles = ",".join(sorted(merged))
-
-            user_sheet.update_cell(idx, 2, updated_titles)
-            print(f"🔁 Updated user: {email}")
-            return
-
-    user_sheet.append_row([email, ",".join(sorted(new_titles))])
-    print(f"✅ New user added: {email}")
-
-# =========================
-# EMAIL
-# =========================
-def send_email(subject, body, to_email):
+def send_email(subject, body, to):
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
-    msg["To"] = to_email
+    msg["To"] = to
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         server.send_message(msg)
 
-# =========================
-# JOB DEDUP
-# =========================
-def job_already_sent(job_url):
-    try:
-        return job_url in job_sheet.col_values(1)
-    except:
-        return False
+# ================= NEW ADMIN EMAIL =================
+def notify_admin_new_user(email, titles):
+    subject = "🆕 New User Registered"
+    body = f"""
+New user subscribed:
 
+Email: {email}
+Titles: {titles}
 
-def mark_job_as_sent(job_url, title, company, location):
-    try:
-        job_sheet.append_row([job_url, title, company, location])
-    except:
-        pass
+Time: {time.strftime("%Y-%m-%d %H:%M:%S")}
+"""
+    send_email(subject, body, "seshusai71@gmail.com")
 
-# =========================
-# PROCESS JOBS
-# =========================
-def process_jobs():
-    users = load_users()
+# ================= USER LOAD =================
+def load_users():
+    rows = user_sheet.get_all_values()
+    users = []
+    title_map = {}
 
-    all_titles = set()
-    for user in users:
-        for t in user["titles"]:
-            all_titles.add(t)
+    for row in rows:
+        if len(row) < 2:
+            continue
 
-    if not all_titles:
-        return
+        email = normalize(row[0])
+        titles = [normalize(t) for t in row[1].split(",") if t.strip()]
 
-    keywords = " OR ".join(all_titles)
+        users.append({"email": email, "titles": titles})
 
-    query_params = {
+        for t in titles:
+            title_map.setdefault(t, set()).add(email)
+
+    return users, title_map, list(title_map.keys())
+
+# ================= SAVE USER =================
+def save_user(email, titles):
+    email = normalize(email)
+    new_titles = {normalize(t) for t in titles.split(",") if t.strip()}
+
+    rows = user_sheet.get_all_values()
+
+    # existing user
+    for idx, row in enumerate(rows, start=1):
+        if normalize(row[0]) == email:
+            existing = set(row[1].split(",")) if len(row) > 1 else set()
+            merged = sorted(existing.union(new_titles))
+            user_sheet.update_cell(idx, 2, ",".join(merged))
+            return
+
+    # new user
+    user_sheet.append_row([email, ",".join(sorted(new_titles))])
+
+    # 🔥 send admin email (async)
+    threading.Thread(
+        target=notify_admin_new_user,
+        args=(email, ",".join(new_titles))
+    ).start()
+
+# ================= JOB PROCESS =================
+def chunk(lst, size):
+    for i in range(0, len(lst), size):
+        yield lst[i:i+size]
+
+def fetch_jobs(titles):
+    keywords = " OR ".join([f'"{t}"' for t in titles])
+
+    params = {
         "keywords": keywords,
         "location": "Canada",
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
 
-    response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
+    try:
+        res = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=15)
+        soup = BeautifulSoup(res.text, "html.parser")
 
-    if response.status_code != 200:
-        return
+        jobs = []
+        for card in soup.find_all("li"):
+            link = card.select_one("a")
+            title = card.select_one("h3")
+            company = card.select_one("h4")
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    cards = soup.find_all("li")
+            if link and title and company:
+                jobs.append({
+                    "url": link["href"].split("?")[0],
+                    "title": normalize(title.text),
+                    "company": company.text.strip()
+                })
 
-    for card in cards:
-        link_tag = card.select_one('[class*="_full-link"]')
-        title_tag = card.select_one('[class*="_title"]')
-        company_tag = card.select_one('[class*="_subtitle"]')
+        return jobs
 
-        if link_tag and title_tag and company_tag:
-            job_url = link_tag['href'].split('?')[0]
+    except Exception as e:
+        logging.warning(e)
+        return []
 
-            if job_already_sent(job_url):
+def process_jobs():
+    users, title_map, all_titles = load_users()
+    sent = set(job_sheet.col_values(1))
+
+    jobs = []
+
+    # parallel fetch
+    with ThreadPoolExecutor(MAX_FETCH_WORKERS) as ex:
+        futures = [ex.submit(fetch_jobs, c) for c in chunk(all_titles, CHUNK_SIZE)]
+        for f in as_completed(futures):
+            jobs.extend(f.result())
+
+    unique = {j["url"]: j for j in jobs}
+
+    new_rows = []
+    email_tasks = []
+
+    with ThreadPoolExecutor(MAX_EMAIL_WORKERS) as ex:
+        for job in unique.values():
+            if job["url"] in sent:
                 continue
 
-            title = title_tag.get_text(strip=True).lower()
-            company = company_tag.get_text(strip=True)
+            matched = set()
+            for t, emails in title_map.items():
+                if t in job["title"]:
+                    matched.update(emails)
 
-            matched_users = []
-
-            for user in users:
-                if any(t in title for t in user["titles"]):
-                    matched_users.append(user["email"])
-
-            if not matched_users:
+            if not matched:
                 continue
 
-            body = f"{title} at {company}\n{job_url}"
+            for email in matched:
+                email_tasks.append(ex.submit(
+                    send_email,
+                    "🚨 Job Alert",
+                    f"{job['title']} at {job['company']}\n{job['url']}",
+                    email
+                ))
 
-            for email in matched_users:
-                send_email("🚨 Job Alert", body, email)
+            new_rows.append([job["url"], job["title"], job["company"], "Canada"])
 
-            mark_job_as_sent(job_url, title, company, "Canada")
+    if new_rows:
+        job_sheet.append_rows(new_rows)
 
-# =========================
-# MODERN UI REGISTER PAGE
-# =========================
+    return {"new_jobs": len(new_rows)}
+
+# ================= ROUTES =================
+@app.route("/")
+def home():
+    return "Service running"
+
+@app.route("/run")
+def run():
+    return process_jobs()
+
 @app.route("/register")
 def register():
     return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Job Alerts</title>
-
-<style>
-body {
-  margin: 0;
-  font-family: 'Segoe UI', sans-serif;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-}
-.card {
-  background: white;
-  padding: 30px;
-  border-radius: 15px;
-  width: 90%;
-  max-width: 420px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-  text-align: center;
-}
-h2 { color: #333; }
-input, textarea {
-  width: 100%;
-  padding: 12px;
-  margin-top: 10px;
-  margin-bottom: 15px;
-  border-radius: 10px;
-  border: 1px solid #ccc;
-}
-button {
-  width: 100%;
-  padding: 14px;
-  border: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  color: white;
-  font-size: 16px;
-  cursor: pointer;
-}
-</style>
-</head>
-
-<body>
-
-<div class="card">
-<h2>🚀 Job Alerts</h2>
-
 <form action="/create-checkout-session" method="post">
-<input type="email" name="email" placeholder="Enter your email" required>
-<textarea name="titles" placeholder="devops engineer, java developer, sre" required></textarea>
-<button type="submit">Subscribe for $20</button>
+<input name="email" required>
+<textarea name="titles" required></textarea>
+<button>Subscribe</button>
 </form>
-
-</div>
-
-</body>
-</html>
 """)
 
-# =========================
-# STRIPE CHECKOUT
-# =========================
 @app.route("/create-checkout-session", methods=["POST"])
-def create_checkout_session():
-    email = request.form.get("email")
-    titles = request.form.get("titles")
+def create():
+    email = request.form["email"]
+    titles = request.form["titles"]
 
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
@@ -258,23 +236,20 @@ def create_checkout_session():
         }],
         mode="payment",
         metadata={"email": email, "titles": titles},
-        success_url="https://linkedin-job-alert-7uhw.onrender.com/success",
-        cancel_url="https://linkedin-job-alert-7uhw.onrender.com/register",
+        success_url="https://yourapp.com/success",
+        cancel_url="https://yourapp.com/register",
     )
 
     return redirect(session.url)
 
-# =========================
-# WEBHOOK
-# =========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     payload = request.data
-    sig_header = request.headers.get("Stripe-Signature")
+    sig = request.headers.get("Stripe-Signature")
 
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
-    except Exception:
+        event = stripe.Webhook.construct_event(payload, sig, WEBHOOK_KEY)
+    except:
         return "", 400
 
     if event["type"] == "checkout.session.completed":
@@ -283,23 +258,10 @@ def webhook():
 
     return "", 200
 
-# =========================
-# SUCCESS
-# =========================
 @app.route("/success")
 def success():
-    return "✅ Payment successful!"
+    return "Payment success"
 
-# =========================
-# RUN JOBS
-# =========================
-@app.route("/")
-def run_jobs():
-    process_jobs()
-    return "Jobs processed"
-
-# =========================
-# RUN
-# =========================
+# ================= RUN =================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(host="0.0.0.0", port=8080)
