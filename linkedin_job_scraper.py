@@ -9,6 +9,7 @@ from typing import Dict, Set, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.mime.text import MIMEText
 
+
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, request, render_template_string, redirect
