@@ -229,7 +229,7 @@ button {
 <form action="/create-checkout-session" method="post">
 <input type="email" name="email" placeholder="Enter your email" required>
 <textarea name="titles" placeholder="devops engineer, java developer, sre" required></textarea>
-<button type="submit">Subscribe for $5</button>
+<button type="submit">Subscribe for $20</button>
 </form>
 
 </div>
@@ -252,7 +252,7 @@ def create_checkout_session():
             "price_data": {
                 "currency": "usd",
                 "product_data": {"name": "Job Alerts"},
-                "unit_amount": 500,
+                "unit_amount": 2000,
             },
             "quantity": 1,
         }],
