@@ -294,8 +294,8 @@ def create():
         }],
         mode="payment",
         metadata={"email": email, "titles": titles},
-        success_url="https://yourapp.com/success",
-        cancel_url="https://yourapp.com/register",
+        success_url="https://linkedin-job-alert-7uhw.onrender.com/success",
+        cancel_url="https://linkedin-job-alert-7uhw.onrender.com/register",
     )
 
     return redirect(session.url)
