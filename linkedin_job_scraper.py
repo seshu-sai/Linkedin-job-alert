@@ -213,11 +213,68 @@ def run():
 @app.route("/register")
 def register():
     return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Alerts</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+.card {
+  background: white;
+  padding: 30px;
+  border-radius: 15px;
+  width: 90%;
+  max-width: 420px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  text-align: center;
+}
+h2 { color: #333; }
+input, textarea {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  margin-bottom: 15px;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+}
+button {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+<h2>🚀 Job Alerts</h2>
+
 <form action="/create-checkout-session" method="post">
-<input name="email" required>
-<textarea name="titles" required></textarea>
-<button>Subscribe</button>
+<input type="email" name="email" placeholder="Enter your email" required>
+<textarea name="titles" placeholder="devops engineer, java developer, sre" required></textarea>
+<button type="submit">Subscribe for $20</button>
 </form>
+
+</div>
+
+</body>
+</html>
 """)
 
 @app.route("/create-checkout-session", methods=["POST"])
