@@ -128,6 +128,7 @@ def process_jobs():
         "location": "Canada",
         "geoId": "101174742",
         "f_TPR": "r3600",
+        "countryCode": "ca",
         "sortBy": "DD"
     }
 
