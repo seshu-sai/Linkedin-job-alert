@@ -126,6 +126,7 @@ def process_jobs():
     query_params = {
         "keywords": keywords,
         "location": "Canada",
+        "geoId": "101174742",
         "f_TPR": "r3600",
         "sortBy": "DD"
     }
