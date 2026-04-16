@@ -22,12 +22,17 @@ stripe.api_key = os.getenv("STRIPE_API_KEY")
 endpoint_secret = os.getenv("WEBHOOK_KEY")
 
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
 # =========================
 # GOOGLE SHEETS SETUP
 # =========================
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+SCOPE = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 
 creds_dict = json.loads(GOOGLE_CREDENTIALS)
 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
@@ -39,7 +44,56 @@ job_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
 user_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet6")
 
 # =========================
-# USERS (NO DUPLICATES)
+# CANADA LOCATION CHECK
+# =========================
+CANADA_LOCATION_KEYWORDS = {
+    "canada",
+    "ontario", "on",
+    "alberta", "ab",
+    "british columbia", "bc",
+    "manitoba", "mb",
+    "new brunswick", "nb",
+    "newfoundland and labrador", "nl",
+    "nova scotia", "ns",
+    "prince edward island", "pe",
+    "quebec", "qc",
+    "saskatchewan", "sk",
+    "northwest territories", "nt",
+    "nunavut", "nu",
+    "yukon", "yt",
+    "toronto", "ottawa", "mississauga", "brampton", "hamilton",
+    "scarborough", "markham", "vaughan", "richmond hill",
+    "waterloo", "kitchener", "cambridge", "guelph", "london",
+    "windsor", "burlington", "oakville", "milton", "ajax",
+    "pickering", "oshawa", "whitby", "barrie", "kingston",
+    "montreal", "montréal", "quebec city", "québec city", "laval",
+    "longueuil", "gatineau", "sherbrooke",
+    "vancouver", "surrey", "burnaby", "richmond", "victoria",
+    "kelowna", "abbotsford", "nanaimo",
+    "calgary", "edmonton", "red deer",
+    "winnipeg", "regina", "saskatoon",
+    "halifax", "st. john's", "st john's", "fredericton",
+    "moncton", "charlottetown", "yellowknife", "whitehorse", "iqaluit",
+    "remote - canada", "canada remote", "remote, canada", "remote in canada"
+}
+
+def is_canada_location(location_text: str) -> bool:
+    if not location_text:
+        return False
+
+    text = location_text.strip().lower()
+
+    if text in CANADA_LOCATION_KEYWORDS:
+        return True
+
+    for keyword in CANADA_LOCATION_KEYWORDS:
+        if keyword in text:
+            return True
+
+    return False
+
+# =========================
+# USERS
 # =========================
 def load_users():
     rows = user_sheet.get_all_values()
@@ -60,23 +114,24 @@ def load_users():
 
 def save_user(email, titles):
     email = email.strip().lower()
-    new_titles = set([t.strip().lower() for t in titles.split(",") if t.strip()])
+    new_titles = {t.strip().lower() for t in titles.split(",") if t.strip()}
 
     rows = user_sheet.get_all_values()
 
     for idx, row in enumerate(rows, start=1):
         if len(row) >= 1 and row[0].strip().lower() == email:
-            existing_titles = set(row[1].split(",")) if len(row) > 1 else set()
+            existing_titles = set()
+            if len(row) > 1 and row[1].strip():
+                existing_titles = {t.strip().lower() for t in row[1].split(",") if t.strip()}
 
             merged = existing_titles.union(new_titles)
             updated_titles = ",".join(sorted(merged))
-
             user_sheet.update_cell(idx, 2, updated_titles)
-            print(f"🔁 Updated user: {email}")
+            print(f"updated user: {email}")
             return
 
     user_sheet.append_row([email, ",".join(sorted(new_titles))])
-    print(f"✅ New user added: {email}")
+    print(f"new user added: {email}")
 
 # =========================
 # EMAIL
@@ -97,65 +152,106 @@ def send_email(subject, body, to_email):
 def job_already_sent(job_url):
     try:
         return job_url in job_sheet.col_values(1)
-    except:
+    except Exception:
         return False
 
 
 def mark_job_as_sent(job_url, title, company, location):
     try:
         job_sheet.append_row([job_url, title, company, location])
-    except:
+    except Exception:
         pass
+
+# =========================
+# LINKEDIN FETCH
+# =========================
+def fetch_jobs_for_title(job_title):
+    params = {
+        "keywords": job_title,
+        "location": "Canada",
+        "f_TPR": "r86400",
+        "sortBy": "DD"
+    }
+
+    try:
+        response = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=20)
+        if response.status_code != 200:
+            print(f"linkedin failed for {job_title}: {response.status_code}")
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        cards = soup.find_all("li")
+        jobs = []
+
+        for card in cards:
+            link_tag = card.select_one('a.base-card__full-link')
+            title_tag = card.select_one('h3.base-search-card__title')
+            company_tag = card.select_one('h4.base-search-card__subtitle')
+            location_tag = card.select_one('span.job-search-card__location')
+
+            if not link_tag or not title_tag or not company_tag:
+                continue
+
+            job_url = link_tag.get("href", "").split("?")[0].strip()
+            title = title_tag.get_text(" ", strip=True).lower()
+            company = company_tag.get_text(" ", strip=True)
+            location = location_tag.get_text(" ", strip=True) if location_tag else ""
+
+            if not job_url:
+                continue
+
+            jobs.append({
+                "job_url": job_url,
+                "title": title,
+                "company": company,
+                "location": location
+            })
+
+        return jobs
+
+    except Exception as e:
+        print(f"error fetching {job_title}: {e}")
+        return []
 
 # =========================
 # PROCESS JOBS
 # =========================
 def process_jobs():
     users = load_users()
+    if not users:
+        return
 
     all_titles = set()
     for user in users:
-        for t in user["titles"]:
-            all_titles.add(t)
+        for title in user["titles"]:
+            all_titles.add(title)
 
     if not all_titles:
         return
 
-    keywords = " OR ".join(all_titles)
+    seen_urls = set()
 
-    query_params = {
-        "keywords": keywords,
-        "location": "Canada",
-        "geoId": "101174742",
-        "f_TPR": "r3600",
-        "countryCode": "ca",
-        "sortBy": "DD"
-    }
+    for search_title in all_titles:
+        jobs = fetch_jobs_for_title(search_title)
 
-    response = requests.get(BASE_URL, headers=HEADERS, params=query_params)
+        for job in jobs:
+            job_url = job["job_url"]
+            title = job["title"]
+            company = job["company"]
+            location = job["location"]
 
-    if response.status_code != 200:
-        return
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    cards = soup.find_all("li")
-
-    for card in cards:
-        link_tag = card.select_one('[class*="_full-link"]')
-        title_tag = card.select_one('[class*="_title"]')
-        company_tag = card.select_one('[class*="_subtitle"]')
-
-        if link_tag and title_tag and company_tag:
-            job_url = link_tag['href'].split('?')[0]
+            if job_url in seen_urls:
+                continue
+            seen_urls.add(job_url)
 
             if job_already_sent(job_url):
                 continue
 
-            title = title_tag.get_text(strip=True).lower()
-            company = company_tag.get_text(strip=True)
+            # strict Canada validation
+            if not is_canada_location(location):
+                continue
 
             matched_users = []
-
             for user in users:
                 if any(t in title for t in user["titles"]):
                     matched_users.append(user["email"])
@@ -163,15 +259,18 @@ def process_jobs():
             if not matched_users:
                 continue
 
-            body = f"{title} at {company}\n{job_url}"
+            body = f"{title} at {company}\n{location}\n{job_url}"
 
             for email in matched_users:
-                send_email("🚨 Job Alert", body, email)
+                try:
+                    send_email("🚨 Job Alert - Canada", body, email)
+                except Exception as e:
+                    print(f"email failed for {email}: {e}")
 
-            mark_job_as_sent(job_url, title, company, "Canada")
+            mark_job_as_sent(job_url, title, company, location)
 
 # =========================
-# MODERN UI REGISTER PAGE
+# REGISTER PAGE
 # =========================
 @app.route("/register")
 def register():
@@ -181,7 +280,6 @@ def register():
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Job Alerts</title>
-
 <style>
 body {
   margin: 0;
@@ -209,6 +307,7 @@ input, textarea {
   margin-bottom: 15px;
   border-radius: 10px;
   border: 1px solid #ccc;
+  box-sizing: border-box;
 }
 button {
   width: 100%;
@@ -222,20 +321,15 @@ button {
 }
 </style>
 </head>
-
 <body>
-
 <div class="card">
 <h2>🚀 Job Alerts</h2>
-
 <form action="/create-checkout-session" method="post">
 <input type="email" name="email" placeholder="Enter your email" required>
-<textarea name="titles" placeholder="devops engineer, java developer, sre" required></textarea>
+<textarea name="titles" placeholder="devops engineer, sre, platform engineer" required></textarea>
 <button type="submit">Subscribe for $20</button>
 </form>
-
 </div>
-
 </body>
 </html>
 """)
@@ -304,4 +398,4 @@ def run_jobs():
 # RUN
 # =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))) 
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
