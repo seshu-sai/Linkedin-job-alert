@@ -7,7 +7,6 @@ from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import stripe
 
 app = Flask(__name__)
 
@@ -18,11 +17,10 @@ EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-stripe.api_key = os.getenv("STRIPE_API_KEY")
-endpoint_secret = os.getenv("WEBHOOK_KEY")
-
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+USERS_FILE = "users.json"
 
 # =========================
 # GOOGLE SHEETS SETUP
@@ -39,36 +37,42 @@ CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
 client = gspread.authorize(CREDS)
 
 job_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet2")
-user_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet6")
 
 # =========================
 # CANADA FILTER
 # =========================
 CANADA_KEYWORDS = [
-    "canada","ontario","toronto","ottawa","mississauga","brampton","hamilton",
-    "vancouver","surrey","burnaby","calgary","edmonton","winnipeg",
-    "montreal","quebec","halifax","remote - canada","canada remote"
+    "canada", "ontario", "toronto", "ottawa", "mississauga", "brampton",
+    "hamilton", "vancouver", "surrey", "burnaby", "calgary", "edmonton",
+    "winnipeg", "montreal", "quebec", "halifax",
+    "remote - canada", "canada remote", "remote canada"
 ]
 
 def is_canada(location):
     if not location:
         return False
+
     location = location.lower()
-    return any(k in location for k in CANADA_KEYWORDS)
+    return any(keyword in location for keyword in CANADA_KEYWORDS)
 
 # =========================
-# USERS
+# USERS FROM JSON
 # =========================
 def load_users():
-    rows = user_sheet.get_all_values()
+    with open(USERS_FILE, "r") as file:
+        data = json.load(file)
+
     users = []
 
-    for row in rows:
-        if len(row) >= 2:
-            users.append({
-                "email": row[0].strip().lower(),
-                "titles": [t.strip().lower() for t in row[1].split(",") if t.strip()]
-            })
+    for user in data:
+        users.append({
+            "email": user["email"].strip().lower(),
+            "titles": [
+                title.strip().lower()
+                for title in user["titles"]
+                if title.strip()
+            ]
+        })
 
     return users
 
@@ -96,12 +100,12 @@ def fetch_jobs(title):
         "sortBy": "DD"
     }
 
-    res = requests.get(BASE_URL, headers=HEADERS, params=params)
+    response = requests.get(BASE_URL, headers=HEADERS, params=params)
 
-    if res.status_code != 200:
+    if response.status_code != 200:
         return []
 
-    soup = BeautifulSoup(res.text, "html.parser")
+    soup = BeautifulSoup(response.text, "html.parser")
     cards = soup.find_all("li")
 
     jobs = []
@@ -129,21 +133,21 @@ def fetch_jobs(title):
 # =========================
 def process_jobs():
     users = load_users()
+
     if not users:
         return
 
-    # 🔥 load existing jobs ONCE
     try:
         existing_jobs = set(job_sheet.col_values(1))
-    except:
+    except Exception:
         existing_jobs = set()
 
     new_rows = []
-    seen = set()
+    seen_in_current_run = set()
 
     all_titles = set()
-    for u in users:
-        all_titles.update(u["titles"])
+    for user in users:
+        all_titles.update(user["titles"])
 
     for search_title in all_titles:
         jobs = fetch_jobs(search_title)
@@ -151,10 +155,13 @@ def process_jobs():
         for job in jobs:
             url = job["url"]
 
-            if url in seen:
+            # Duplicate in same run
+            if url in seen_in_current_run:
                 continue
-            seen.add(url)
 
+            seen_in_current_run.add(url)
+
+            # Duplicate already stored in Google Sheet
             if url in existing_jobs:
                 continue
 
@@ -162,22 +169,35 @@ def process_jobs():
                 continue
 
             matched_users = []
-            for u in users:
-                if any(t in job["title"] for t in u["titles"]):
-                    matched_users.append(u["email"])
+
+            for user in users:
+                if any(title in job["title"] for title in user["titles"]):
+                    matched_users.append(user["email"])
 
             if not matched_users:
                 continue
 
-            body = f"{job['title']} at {job['company']}\n{job['location']}\n{url}"
+            body = f"""
+{job['title']} at {job['company']}
+{job['location']}
+
+Apply here:
+{url}
+"""
 
             for email in matched_users:
                 send_email("🚨 Job Alert - Canada", body, email)
 
-            new_rows.append([url, job["title"], job["company"], job["location"]])
+            new_rows.append([
+                url,
+                job["title"],
+                job["company"],
+                job["location"],
+                ", ".join(matched_users)
+            ])
+
             existing_jobs.add(url)
 
-    # 🔥 batch write (fix 429)
     if new_rows:
         job_sheet.append_rows(new_rows)
 
@@ -187,7 +207,7 @@ def process_jobs():
 @app.route("/")
 def run():
     process_jobs()
-    return "jobs processed"
+    return "Canada jobs processed successfully. No duplicate jobs sent."
 
 # =========================
 # RUN
