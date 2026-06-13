@@ -96,7 +96,7 @@ def fetch_jobs(title):
     params = {
         "keywords": title,
         "location": "Canada",
-        "f_TPR": "r86400",
+        "f_TPR": "r3600",
         "sortBy": "DD"
     }
 
