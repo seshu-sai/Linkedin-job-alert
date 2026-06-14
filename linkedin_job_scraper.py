@@ -22,26 +22,43 @@ GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 USERS_FILE = "users.json"
 
 BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
 # =========================
 # GOOGLE SHEETS SETUP
 # =========================
-SCOPE = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
+def get_google_sheet():
+    if not GOOGLE_CREDENTIALS:
+        raise Exception("GOOGLE_CREDENTIALS environment variable is missing")
 
-creds_dict = json.loads(GOOGLE_CREDENTIALS)
-creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
 
-CREDS = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-client = gspread.authorize(CREDS)
+    creds_dict = json.loads(GOOGLE_CREDENTIALS)
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
-job_sheet = client.open("LinkedIn Job Tracker").worksheet("Sheet9")
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+
+    spreadsheet = client.open("LinkedIn Job Tracker")
+
+    try:
+        sheet = spreadsheet.worksheet("Sheet9")
+    except gspread.WorksheetNotFound:
+        sheet = spreadsheet.add_worksheet(title="Sheet9", rows=1000, cols=10)
+
+    return sheet
+
+
+job_sheet = get_google_sheet()
 
 # =========================
-# FILTER
+# CANADA FILTER
 # =========================
 CANADA_KEYWORDS = [
     "canada", "ontario", "toronto", "ottawa", "mississauga", "brampton",
@@ -49,6 +66,7 @@ CANADA_KEYWORDS = [
     "winnipeg", "montreal", "quebec", "halifax",
     "remote - canada", "canada remote", "remote canada"
 ]
+
 
 def is_canada(location):
     if not location:
@@ -61,17 +79,26 @@ def is_canada(location):
 # USERS
 # =========================
 def load_users():
+    if not os.path.exists(USERS_FILE):
+        raise Exception("users.json file is missing")
+
     with open(USERS_FILE, "r") as file:
         data = json.load(file)
 
     users = []
 
     for user in data:
+        email = user.get("email", "").strip().lower()
+        titles = user.get("titles", [])
+
+        if not email or not titles:
+            continue
+
         users.append({
-            "email": user["email"].strip().lower(),
+            "email": email,
             "titles": [
                 title.strip().lower()
-                for title in user.get("titles", [])
+                for title in titles
                 if title.strip()
             ]
         })
@@ -82,6 +109,9 @@ def load_users():
 # EMAIL
 # =========================
 def send_email(subject, body, to_email):
+    if not EMAIL_SENDER or not EMAIL_PASSWORD:
+        raise Exception("EMAIL_SENDER or EMAIL_PASSWORD is missing")
+
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
@@ -92,7 +122,7 @@ def send_email(subject, body, to_email):
         server.send_message(msg)
 
 # =========================
-# LINKEDIN SCRAPER
+# FETCH JOBS
 # =========================
 def fetch_jobs(title):
     params = {
@@ -102,14 +132,19 @@ def fetch_jobs(title):
         "sortBy": "DD"
     }
 
-    response = requests.get(
-        BASE_URL,
-        headers=HEADERS,
-        params=params,
-        timeout=20
-    )
+    try:
+        response = requests.get(
+            BASE_URL,
+            headers=HEADERS,
+            params=params,
+            timeout=20
+        )
+    except Exception as e:
+        print(f"Request failed for {title}: {e}")
+        return []
 
     if response.status_code != 200:
+        print(f"LinkedIn returned {response.status_code} for {title}")
         return []
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -138,27 +173,60 @@ def fetch_jobs(title):
     return jobs
 
 # =========================
-# MAIN PROCESS
+# PROCESS JOBS
 # =========================
 def process_jobs():
+    print("Starting job process...")
+
     users = load_users()
+    print(f"Users loaded: {len(users)}")
+
+    if not users:
+        print("No valid users found")
+        return
 
     try:
         existing_jobs = set(job_sheet.col_values(1))
-    except Exception:
+        print(f"Existing jobs in Sheet9: {len(existing_jobs)}")
+    except Exception as e:
+        print(f"Failed to read Sheet9: {e}")
         existing_jobs = set()
 
-    first_run = len(existing_jobs) == 0
+    # Add headers if sheet is empty
+    if len(existing_jobs) == 0:
+        headers = [
+            "URL",
+            "Job Title",
+            "Company",
+            "Location",
+            "Posted Time",
+            "Sent To",
+            "Processed At",
+            "Status"
+        ]
+        try:
+            job_sheet.append_row(headers, value_input_option="USER_ENTERED")
+            existing_jobs.add("URL")
+            print("Headers added to Sheet9")
+        except Exception as e:
+            print(f"Failed to add headers: {e}")
+
+    first_run = len(existing_jobs) <= 1
+    print(f"First run: {first_run}")
 
     all_titles = set()
+
     for user in users:
         all_titles.update(user["titles"])
+
+    print(f"Searching titles: {all_titles}")
 
     new_rows = []
     seen_in_current_run = set()
 
     for search_title in all_titles:
         jobs = fetch_jobs(search_title)
+        print(f"{search_title}: fetched {len(jobs)} jobs")
 
         for job in jobs:
             url = job["url"]
@@ -169,9 +237,11 @@ def process_jobs():
             seen_in_current_run.add(url)
 
             if url in existing_jobs:
+                print(f"Skipped duplicate job: {url}")
                 continue
 
             if not is_canada(job["location"]):
+                print(f"Skipped non-Canada job: {job['location']}")
                 continue
 
             matched_users = []
@@ -181,11 +251,12 @@ def process_jobs():
                     matched_users.append(user["email"])
 
             if not matched_users:
+                print(f"No matched user for job: {job['title']}")
                 continue
 
             status = "baseline" if first_run else "emailed"
 
-            new_rows.append([
+            row = [
                 url,
                 job["title"],
                 job["company"],
@@ -194,10 +265,14 @@ def process_jobs():
                 ", ".join(matched_users),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 status
-            ])
+            ]
 
+            new_rows.append(row)
             existing_jobs.add(url)
 
+            print(f"Prepared row: {job['title']} | {job['company']}")
+
+            # First run only stores jobs, no email
             if first_run:
                 continue
 
@@ -214,22 +289,43 @@ Apply here:
 """
 
             for email in matched_users:
-                send_email("🚨 New LinkedIn Job Alert - Canada", body, email)
+                try:
+                    send_email(
+                        "🚨 New LinkedIn Job Alert - Canada",
+                        body,
+                        email
+                    )
+                    print(f"Email sent to {email}")
+                except Exception as e:
+                    print(f"Email failed for {email}: {e}")
+
+    print(f"Rows to save: {len(new_rows)}")
 
     if new_rows:
-        job_sheet.append_rows(new_rows)
+        try:
+            job_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
+            print("Rows saved to Sheet9 successfully")
+        except Exception as e:
+            print(f"Failed to save rows to Sheet9: {e}")
+    else:
+        print("No new jobs to save")
 
 # =========================
-# FLASK ROUTES
+# ROUTES
 # =========================
 @app.route("/")
 def home():
     return "LinkedIn Job Scraper is running"
 
+
 @app.route("/run")
 def run_jobs():
-    process_jobs()
-    return "Jobs processed successfully"
+    try:
+        process_jobs()
+        return "Jobs processed successfully. Check Render logs."
+    except Exception as e:
+        print(f"Run failed: {e}")
+        return f"Run failed: {e}", 500
 
 # =========================
 # LOCAL RUN
