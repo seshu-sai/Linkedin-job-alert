@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 from flask import Flask
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
@@ -34,12 +33,7 @@ CANADA_KEYWORDS = [
     "remote - canada", "canada remote", "remote canada"
 ]
 
-scheduler_started = False
 
-
-# =========================
-# GOOGLE SHEET
-# =========================
 def get_google_sheet():
     creds_dict = json.loads(GOOGLE_CREDENTIALS)
     creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
@@ -84,9 +78,6 @@ def load_existing_job_ids(sheet):
     return set(v.strip() for v in values[1:] if v.strip())
 
 
-# =========================
-# USERS
-# =========================
 def load_users():
     with open(USERS_FILE, "r") as file:
         data = json.load(file)
@@ -96,9 +87,9 @@ def load_users():
     for user in data:
         email = user.get("email", "").strip().lower()
         titles = [
-            t.strip().lower()
-            for t in user.get("titles", [])
-            if t.strip()
+            title.strip().lower()
+            for title in user.get("titles", [])
+            if title.strip()
         ]
 
         if email and titles:
@@ -110,9 +101,6 @@ def load_users():
     return users
 
 
-# =========================
-# HELPERS
-# =========================
 def get_job_id(url):
     return url.rstrip("/").split("/")[-1]
 
@@ -122,12 +110,9 @@ def is_canada(location):
         return False
 
     location = location.lower()
-    return any(k in location for k in CANADA_KEYWORDS)
+    return any(keyword in location for keyword in CANADA_KEYWORDS)
 
 
-# =========================
-# EMAIL
-# =========================
 def send_email(subject, body, to_email):
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
@@ -142,11 +127,9 @@ def send_email(subject, body, to_email):
         server.sendmail(EMAIL_SENDER, [to_email], msg.as_string())
         print(f"Email sent to {to_email}")
         return True
-
     except Exception as e:
         print(f"Email failed for {to_email}: {e}")
         return False
-
     finally:
         if server:
             try:
@@ -155,14 +138,11 @@ def send_email(subject, body, to_email):
                 pass
 
 
-# =========================
-# LINKEDIN SCRAPER
-# =========================
 def fetch_jobs(search_title):
     params = {
         "keywords": search_title,
         "location": "Canada",
-        "f_TPR": "r600",   # last 10 minutes
+        "f_TPR": "r3600",
         "sortBy": "DD"
     }
 
@@ -211,9 +191,6 @@ def fetch_jobs(search_title):
     return jobs
 
 
-# =========================
-# MAIN JOB PROCESS
-# =========================
 def process_jobs():
     print("Checking LinkedIn jobs...")
 
@@ -226,8 +203,16 @@ def process_jobs():
     first_run = len(existing_job_ids) == 0
 
     all_titles = set()
+    title_to_emails = {}
+
     for user in users:
-        all_titles.update(user["titles"])
+        for title in user["titles"]:
+            all_titles.add(title)
+
+            if title not in title_to_emails:
+                title_to_emails[title] = []
+
+            title_to_emails[title].append(user["email"])
 
     new_rows = []
     pending_emails = []
@@ -241,23 +226,23 @@ def process_jobs():
             job_id = job["job_id"]
 
             if job_id in seen_this_run:
+                print(f"Skipped same-run duplicate: {job_id}")
                 continue
 
             seen_this_run.add(job_id)
 
             if job_id in existing_job_ids:
+                print(f"Skipped already saved duplicate: {job_id}")
                 continue
 
             if not is_canada(job["location"]):
+                print(f"Skipped non-Canada job: {job['location']}")
                 continue
 
-            matched_users = []
-
-            for user in users:
-                if any(title in job["title"] for title in user["titles"]):
-                    matched_users.append(user["email"])
+            matched_users = title_to_emails.get(search_title, [])
 
             if not matched_users:
+                print(f"No matched emails for search title: {search_title}")
                 continue
 
             status = "baseline" if first_run else "pending_email"
@@ -284,6 +269,7 @@ New job posted in Canada
 Job Title: {job['title']}
 Company: {job['company']}
 Location: {job['location']}
+Matched Search: {search_title}
 Posted Time: {job['posted_time']}
 
 Apply here:
@@ -298,65 +284,60 @@ Apply here:
 
     if not new_rows:
         print("No new jobs found")
-        return
+        return {
+            "new_jobs": 0,
+            "emails": 0
+        }
 
     try:
         sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
         print(f"Saved {len(new_rows)} new jobs to Sheet9")
     except Exception as e:
-        print(f"Sheet9 save failed. Emails not sent. Error: {e}")
-        return
+        print(f"Failed to save jobs to Sheet9. Emails not sent: {e}")
+        return {
+            "new_jobs": 0,
+            "emails": 0,
+            "error": str(e)
+        }
 
     if first_run:
-        print("Baseline saved. No emails sent on first run.")
-        return
+        print("First run baseline saved. No emails sent.")
+        return {
+            "new_jobs": len(new_rows),
+            "emails": 0
+        }
+
+    email_count = 0
 
     for item in pending_emails:
-        send_email(
+        if send_email(
             "🚨 New LinkedIn Job Alert - Canada",
             item["body"],
             item["email"]
-        )
+        ):
+            email_count += 1
+
+    print(f"Emails sent: {email_count}")
+
+    return {
+        "new_jobs": len(new_rows),
+        "emails": email_count
+    }
 
 
-# =========================
-# SCHEDULER
-# =========================
-def start_scheduler():
-    global scheduler_started
-
-    if scheduler_started:
-        return
-
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        func=process_jobs,
-        trigger="interval",
-        minutes=5,
-        id="linkedin_job_checker",
-        replace_existing=True
-    )
-    scheduler.start()
-
-    scheduler_started = True
-    print("Scheduler started. Checking jobs every 5 minutes.")
-
-
-start_scheduler()
-
-
-# =========================
-# ROUTES
-# =========================
 @app.route("/")
 def home():
-    return "LinkedIn Job Scraper is running. It checks every 5 minutes.", 200
+    return "LinkedIn Job Scraper is running", 200
 
 
-@app.route("/run")
-def run_now():
-    process_jobs()
-    return "Manual job check completed.", 200
+@app.route("/run", methods=["GET", "POST"])
+def run_jobs():
+    try:
+        result = process_jobs()
+        return result, 200
+    except Exception as e:
+        print(f"Run failed: {e}")
+        return {"error": str(e)}, 500
 
 
 @app.route("/test-sheet")
